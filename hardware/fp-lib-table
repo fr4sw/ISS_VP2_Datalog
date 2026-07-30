@@ -1,0 +1,9 @@
+(fp_lib_table
+  (version 7)
+  (lib (name "Empreinte_Crée")(type "KiCad")(uri "${KIPRJMOD}/Librairie/empreinte_METEOR/Empreinte_Crée")(options "")(descr ""))
+  (lib (name "THVD_1439_Empreinte")(type "KiCad")(uri "${KIPRJMOD}/Librairie/empreinte_METEOR/THVD_1439_Empreinte")(options "")(descr ""))
+  (lib (name "XIAO_Empreinte")(type "KiCad")(uri "${KIPRJMOD}/Librairie/empreinte_METEOR/XIAO_Empreinte")(options "")(descr ""))
+  (lib (name "empreinte")(type "KiCad")(uri "${KIPRJMOD}/Librairie/empreinte")(options "")(descr ""))
+  (lib (name "CERN_PCBmodules")(type "KiCad")(uri "C:/D/Enseignant_New/2025_2026/A_Utiliser/Kicad/cern-kicad-libs-master/cern-kicad-libs-master/PcbLib/PCB Modules.pretty")(options "")(descr ""))
+  (lib (name "and3rson")(type "KiCad")(uri "${KIPRJMOD}/Librairie/and3rson_parts-main/parts-main/footprints/footprints.pretty")(options "")(descr ""))
+)

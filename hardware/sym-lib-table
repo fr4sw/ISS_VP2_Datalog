@@ -1,0 +1,11 @@
+(sym_lib_table
+  (version 7)
+  (lib (name "thvd1439")(type "KiCad")(uri "${KIPRJMOD}/Librairie/Schema_Meteor_OI/schema-thvd1439/thvd1439.kicad_sym")(options "")(descr ""))
+  (lib (name "MeteoR_OI")(type "KiCad")(uri "${KIPRJMOD}/Librairie/Schema_Meteor_OI/Symbole-MeteoR_OI/MeteoR_OI.kicad_sym")(options "")(descr ""))
+  (lib (name "Seeed_Studio_XIAO_Series")(type "KiCad")(uri "${KIPRJMOD}/Librairie/Schema_Meteor_OI/Xiao_Symbol/Seeed_Studio_XIAO_Series.kicad_sym")(options "")(descr ""))
+  (lib (name "connection-RJ11")(type "KiCad")(uri "${KIPRJMOD}/Librairie/Schema_Meteor_OI/CONN6/connection-RJ11.kicad_sym")(options "")(descr ""))
+  (lib (name "RF_Module")(type "KiCad")(uri "${KIPRJMOD}/Librairie/Schema_Meteor_OI/RFM/RF_Module.kicad_sym")(options "")(descr ""))
+  (lib (name "Xiao")(type "KiCad")(uri "${KIPRJMOD}/Librairie/Xiao/XIAO_Series_SCH_Symbols/XIAO_Series_SCH_Symbols/Seeed_Studio_XIAO_Series.kicad_sym")(options "")(descr ""))
+  (lib (name "MeteoROI_rc_Lib_Sch")(type "KiCad")(uri "${KIPRJMOD}/Librairie/MeteoROI_rc_Lib_Sch.kicad_sym")(options "")(descr ""))
+  (lib (name "and3rson")(type "KiCad")(uri "${KIPRJMOD}/Librairie/and3rson_parts-main/parts-main/symbols/my.kicad_sym")(options "")(descr ""))
+)
