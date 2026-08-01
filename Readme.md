@@ -26,7 +26,7 @@ Testé :
 
 IDE/Core : Arduino IDE portable 1.8.19, core Seed nRF52 Boards 1.1.13, core ESP32 3.2.0-\>3.3.11
 
-Librairies : Adafruit BME680 1.0.10 (Adafruit BusIO 1.11.5-\>1.17.4, Adafruit unified sensors 1.1.5 -\>1.1.15)
+Librairies : Adafruit BME680 2.0.6 (Adafruit BusIO 1.17.4, Adafruit unified sensors 1.1.15)
 
 # 4. Matériel Davis
 
