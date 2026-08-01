@@ -107,6 +107,7 @@ bool decodeFrame(const IssRawFrame &rawFrame, IssData &result)
                 uint16_t rawSolar = ((uint16_t)rawFrame.bytes[3] << 8 | rawFrame.bytes[4]) >> 6;
                 result.solarRadiation = (uint16_t)((float)rawSolar * 1.757936f);
             }
+            else result.solarRadiation = 0;
             break;
         }
         case ISS_TYPE_UV:
@@ -129,6 +130,7 @@ bool decodeFrame(const IssRawFrame &rawFrame, IssData &result)
                     result.rainRateMmPerHour = strongRain ? (11520.0f / rawTime) : (720.0f / rawTime);
                 }
             }
+            else result.rainRateMmPerHour = 0;
             break;
         }
         case ISS_TYPE_RAIN:

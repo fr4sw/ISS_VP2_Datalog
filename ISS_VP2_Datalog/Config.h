@@ -37,9 +37,9 @@
 // A adapter avant chaque campagne de mesure si le GPS/RTC sont absents.
 #define MANUAL_TIME_YEAR    2026
 #define MANUAL_TIME_MONTH      8
-#define MANUAL_TIME_DAY       01
-#define MANUAL_TIME_HOUR      21
-#define MANUAL_TIME_MINUTE    20
+#define MANUAL_TIME_DAY       02
+#define MANUAL_TIME_HOUR      01
+#define MANUAL_TIME_MINUTE    05
 #define MANUAL_TIME_SECOND     0
 
 // Indicateur de forcage : a 1, le RTC DS3231 est reecrit avec les valeurs
