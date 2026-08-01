@@ -27,13 +27,7 @@ void BmeIndoor::begin()
     lastData.dataValid = false;
 
 #if USE_BME680
-    configureI2cPins();
-#if defined(ARDUINO_ARCH_NRF52)
-    Wire.begin();
-#elif defined(ARDUINO_ARCH_ESP32)
-    Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
-#endif
-    Wire.setClock(I2C_SPEED);
+    beginI2cBus();
 
     bool beginSuccess = bmeSensor.begin(BME680_I2C_ADDRESS, &Wire);
     if (beginSuccess == false)

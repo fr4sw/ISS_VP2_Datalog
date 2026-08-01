@@ -31,16 +31,24 @@
 #define TIME_MODE_GPS_ONLY  3
 #define TIME_MODE_MANUAL    4
 
-#define TIME_MODE   TIME_MODE_MANUAL
+#define TIME_MODE   TIME_MODE_RTC_ONLY
 
 // Date/heure de reference utilisee si aucune autre source n'est disponible.
 // A adapter avant chaque campagne de mesure si le GPS/RTC sont absents.
 #define MANUAL_TIME_YEAR    2026
 #define MANUAL_TIME_MONTH      8
 #define MANUAL_TIME_DAY       01
-#define MANUAL_TIME_HOUR      16
-#define MANUAL_TIME_MINUTE    45
+#define MANUAL_TIME_HOUR      21
+#define MANUAL_TIME_MINUTE    20
 #define MANUAL_TIME_SECOND     0
+
+// Indicateur de forcage : a 1, le RTC DS3231 est reecrit avec les valeurs
+// MANUAL_TIME_* ci-dessus a CHAQUE demarrage, meme s'il contient deja un
+// horodatage valide (mise a l'heure volontaire, ex : premiere mise en
+// service ou recalage sur le terrain). A repasser a 0 apres la mise a
+// l'heure, sans quoi le RTC perd sa fonction de maintien de l'heure a la
+// coupure d'alimentation du reste du montage.
+#define RTC_FORCE_MANUAL_TIME   0
 
 // --- Interfaces annexes ---
 #define USE_SD_CARD    1

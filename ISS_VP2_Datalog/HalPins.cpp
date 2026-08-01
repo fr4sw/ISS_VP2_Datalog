@@ -44,6 +44,28 @@ void configureI2cPins()
     // Sur ESP32, Wire.begin(sda, scl) prend les broches directement.
 }
 
+void beginI2cBus()
+{
+    // Idempotent : begin() n'est execute qu'une seule fois, meme si
+    // plusieurs modules (BmeIndoor, Rtc, ...) partagent le meme bus I2C
+    // et appellent chacun cette fonction depuis leur propre begin().
+    static bool i2cBusStarted = false;
+    if (i2cBusStarted == true)
+    {
+        return;
+    }
+
+    configureI2cPins();
+#if defined(ARDUINO_ARCH_NRF52)
+    Wire.begin();
+#elif defined(ARDUINO_ARCH_ESP32)
+    Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
+#endif
+    Wire.setClock(I2C_SPEED);
+
+    i2cBusStarted = true;
+}
+
 void configureSpiPins()
 {
 #if defined(ARDUINO_ARCH_NRF52)

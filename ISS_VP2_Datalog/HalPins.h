@@ -8,6 +8,11 @@
 //             configureGpsPins()  - idem pour le GPS/Mesh partage.
 //             configureI2cPins()  - idem pour Wire.
 //             configureSpiPins()  - idem pour SPI (hors CS, gere a part).
+//             beginI2cBus()       - point unique d'initialisation du bus
+//                                   I2C (broches + begin() + frequence).
+//                                   Idempotent : plusieurs modules peuvent
+//                                   partager le meme bus I2C sans double
+//                                   initialisation (ex : BmeIndoor et Rtc).
 // Remarque  : Declaration du second peripherique UART materiel (UARTE1),
 //             distinct de Serial1 (UARTE0, deja dedie au RS485).
 //             Les symboles UARTE1_IRQn et NRF_UARTE1_BASE sont fournis
@@ -24,6 +29,7 @@
 void configureRs485Pins();
 void configureI2cPins();
 void configureSpiPins();
+void beginI2cBus();
 
 #if defined(ARDUINO_ARCH_NRF52)
     extern Uart Serial2;   // GPS/Mesh, commute via CD4053

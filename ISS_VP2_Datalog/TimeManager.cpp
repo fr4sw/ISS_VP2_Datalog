@@ -6,6 +6,9 @@
 #include "HalPins.h"
 #include "Config.h"
 #include "BoardConfig.h"
+#if (TIME_MODE == TIME_MODE_GPS_RTC) || (TIME_MODE == TIME_MODE_RTC_ONLY)
+    #include "Rtc.h"
+#endif
 
 TimeManager timeManager;
 
@@ -15,8 +18,13 @@ void TimeManager::begin()
     rtcValid = false;
     manualStartMillis = 0;
 
+#if DEBUG
+    Serial.print(F("[TimeManager] Begin"));
+    Serial.print(F(" - "));
+    Serial.print(F("TIME_MODE : ")); Serial.print(TIME_MODE); Serial.println(F(" "));
+#endif
+
 #if TIME_MODE == TIME_MODE_GPS_RTC
-    Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
     rtcValid = rtcBegin();
     if (rtcValid == false)
     {
@@ -25,7 +33,6 @@ void TimeManager::begin()
     Serial1.begin(UART_GPS_BAUD, SERIAL_8N1, PIN_GPS_RX, -1);
 
 #elif TIME_MODE == TIME_MODE_RTC_ONLY
-    Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
     rtcValid = rtcBegin();
     if (rtcValid == false)
     {
