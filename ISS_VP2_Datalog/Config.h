@@ -23,7 +23,7 @@
 // Ordre de preference si plusieurs sources sont physiquement presentes :
 //   1) TIME_MODE_GPS_RTC   (GPS prioritaire, RTC en secours et resynchro)
 //   2) TIME_MODE_RTC_ONLY
-//   3) TIME_MODE_GPS_ONLY
+//   3) TIME_MODE_GPS_ONLY (uniquement 1 fois par heure, avec manual après la première mise à l'heure)
 //   4) TIME_MODE_MANUAL    (horodatage fige, initialise dans le code)
 // Un seul mode doit etre selectionne ci-dessous.
 #define TIME_MODE_GPS_RTC   1
@@ -36,16 +36,17 @@
 // Date/heure de reference utilisee si aucune autre source n'est disponible.
 // A adapter avant chaque campagne de mesure si le GPS/RTC sont absents.
 #define MANUAL_TIME_YEAR    2026
-#define MANUAL_TIME_MONTH   7
-#define MANUAL_TIME_DAY      30
-#define MANUAL_TIME_HOUR    17
-#define MANUAL_TIME_MINUTE  40
-#define MANUAL_TIME_SECOND   0
+#define MANUAL_TIME_MONTH      8
+#define MANUAL_TIME_DAY       01
+#define MANUAL_TIME_HOUR      16
+#define MANUAL_TIME_MINUTE    45
+#define MANUAL_TIME_SECOND     0
 
 // --- Interfaces annexes ---
 #define USE_SD_CARD    1
 #define USE_WIFI_IHM   0
 #define USE_OTA        0
+#define USE_BME680     1         // capteur temp, Hum, pression interne (et gaz eventuellement)
 
 // --- Constantes fonctionnelles (pas de GPIO, valeurs physiques nommées) ---
 #define GPS_TIMEOUT              10000   // ms, avant abandon d'une synchro GPS
@@ -58,6 +59,14 @@
 #define ISS_RS485_FRAME_LENGTH      8   // filaire, pas de CRC
 #define ISS_WIRELESS_FRAME_LENGTH   8   // FSK, 6 octets utiles + 2 octets CRC
 
+// --- timeout écriture carte SD (pour ne pas écrire trop souvent)
+#define LOG_WRITE_INTERVAL_MS   30000UL
+
+// --- Capteur interieur BME680 ---
+#define BME680_READ_INTERVAL_MS   30000UL   // ms, periode entre deux mesures 30s pour debug, ensuite 1 à 5 minutes
+
+#define DEBUG              1   // 1 = affiche les acquisitions de données, 0 = production
+
 #define DEBUG_RAW_FRAMES   1   // 1 = affiche chaque trame brute recue en
                                 // hexadecimal avant decodage, 0 = production
 
@@ -67,5 +76,3 @@
 // quelques dizaines de bits sans reception pendant l'assemblage d'une
 // trame signale de maniere fiable une perte de synchronisation.
 #define ISS_RS485_RESYNC_TIMEOUT_US   ((100UL * 1000000UL) / UART_RS485_BAUD)  
-
-#define LOG_WRITE_INTERVAL_MS   30000UL

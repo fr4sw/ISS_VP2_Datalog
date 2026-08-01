@@ -16,7 +16,7 @@
 //undef pour éviter les warnings
 #undef PIN_LED
 #define PIN_LED   LED_RED   // LED rouge native de la carte XIAO nRF52840
-
+//==============Partie === ESP32 ================================================================================
 #if defined(ARDUINO_ARCH_ESP32)
 
   #define PIN_RADIO_CS     5
@@ -31,6 +31,8 @@
 
   #define PIN_I2C_SDA      21
   #define PIN_I2C_SCL      22
+  #define I2C_SPEED        100000UL   // I2C standard mode (100 kHz)
+
 
   #define PIN_GPS_RX       34
   #define PIN_GPS_TX       -1
@@ -44,9 +46,9 @@
 
   #define UART_ISS_BAUD    19200   // FSK, débit natif module ISS Davis
   #define UART_RS485_BAUD  9600    // RS485 filaire, mesuré terrain
-  #define UART_GPS_BAUD    9600
   #define SPI_SD_FREQUENCY 4000000
 
+//==============Partie === nRF52 ================================================================================
 #elif defined(ARDUINO_ARCH_NRF52)
 
   // RS485 : reception seule (RO du transceiver -> RX du MCU).
@@ -74,6 +76,7 @@
   
   #define PIN_I2C_SDA      7    // D7 P1.12
   #define PIN_I2C_SCL      8    // D8 P1.13
+  #define I2C_SPEED        100000UL   // I2C standard mode (100 kHz)
 
 // Les macros PIN_SPI_SCK/MISO/MOSI du core restent inchangees (D8/D9/D10).
 // Nos broches reelles (D0/D1/D2) sont conservees sous un nom distinct
@@ -82,12 +85,18 @@
 #define PIN_SD_SPI_MISO   2    // D2 / P0.28
 #define PIN_SD_SPI_MOSI   1    // D1 / P0.03
 #define PIN_SD_CS         3    // D3 / P0.29
-
-
-
-  #define UART_GPS_BAUD    9600
-  #define SPI_SD_FREQUENCY 4000000
+#define SPI_SD_FREQUENCY 4000000
 
 #else
   #error "BoardConfig.h : cible non definie"
 #endif
+
+//==============Partie === Commune ================================================================================
+
+// Adresse I2C du capteur interieur BME680 : 0x76 si SDO relie a GND (cablage
+// retenu sur ce projet), 0x77 si SDO relie a VCC. Constante materielle liee
+// au cablage, independante de l'architecture du microcontroleur.
+#define BME680_I2C_ADDRESS   0x76
+
+// Debit GPS
+#define UART_GPS_BAUD    9600

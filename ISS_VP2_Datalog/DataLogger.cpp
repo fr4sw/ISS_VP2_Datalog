@@ -40,6 +40,7 @@ void DataLogger::begin()
     sequenceNumber = 0;
     lastWriteMillis = 0;
     currentState.frameValid = false;
+    currentIndoorState.dataValid = false;
 
 #if USE_SD_CARD
     pinMode(PIN_SD_CS, OUTPUT);
@@ -100,7 +101,7 @@ void DataLogger::begin()
     Serial.print(F("[DataLogger] Fichier de log cree : "));
     Serial.println(logFileName);
 
-    logFile.println(F("seq,date,heure,stationId,batterieFaible,temperatureC,humidite,rayonnementSolaire,indexUV,pluieMmH,compteurPluie,rafaleKph,directionVent"));
+    logFile.println(F("seq,date,heure,stationId,batterieFaible,temperatureC,humidite,rayonnementSolaire,indexUV,pluieMmH,compteurPluie,rafaleKph,directionVent,temperatureInterieureC,humiditeInterieure,pressionInterieureHpa"));
     logFile.flush();
 #endif
 }
@@ -124,6 +125,11 @@ void DataLogger::printDecodedValue(const IssData &data)
     }
 }
 
+void DataLogger::updateIndoorData(const IndoorData &data)
+{
+    currentIndoorState = data;
+}
+
 void DataLogger::logRecord(const IssData &data)
 {
     if (data.frameValid == false)
@@ -131,7 +137,9 @@ void DataLogger::logRecord(const IssData &data)
         return;
     }
 
+#if DEBUG
     printDecodedValue(data);
+#endif
 
     currentState.stationId = data.stationId;
     currentState.batteryLow = data.batteryLow;
@@ -168,14 +176,35 @@ void DataLogger::logRecord(const IssData &data)
 
     sequenceNumber = sequenceNumber + 1;
 
-    char line[200];
-    snprintf(line, sizeof(line), "%lu,%s,%s,%u,%u,%.1f,%.1f,%u,%.1f,%.1f,%u,%u,%u",
+    // Champs du capteur interieur formates a part : affiche "NA" tant
+    // qu'aucune mesure valide n'a ete recue depuis le demarrage (règle 6 -
+    // une valeur 0.0 par defaut serait indiscernable d'une mesure reelle).
+    char indoorTemperatureField[8];
+    char indoorHumidityField[8];
+    char indoorPressureField[8];
+
+    if (currentIndoorState.dataValid == true)
+    {
+        snprintf(indoorTemperatureField, sizeof(indoorTemperatureField), "%.1f", currentIndoorState.temperatureIndoor);
+        snprintf(indoorHumidityField, sizeof(indoorHumidityField), "%.1f", currentIndoorState.humidityIndoor);
+        snprintf(indoorPressureField, sizeof(indoorPressureField), "%.1f", currentIndoorState.pressureIndoor);
+    }
+    else
+    {
+        snprintf(indoorTemperatureField, sizeof(indoorTemperatureField), "NA");
+        snprintf(indoorHumidityField, sizeof(indoorHumidityField), "NA");
+        snprintf(indoorPressureField, sizeof(indoorPressureField), "NA");
+    }
+
+    char line[240];
+    snprintf(line, sizeof(line), "%lu,%s,%s,%u,%u,%.1f,%.1f,%u,%.1f,%.1f,%u,%u,%u,%s,%s,%s",
              sequenceNumber, dateString, timeString,
              currentState.stationId, currentState.batteryLow,
              currentState.temperatureOutside, currentState.humidityOutside,
              currentState.solarRadiation, currentState.uvIndex,
              currentState.rainRateMmPerHour, currentState.rainTipCount,
-             currentState.windGustKph, currentState.windDirectionDeg);
+             currentState.windGustKph, currentState.windDirectionDeg,
+             indoorTemperatureField, indoorHumidityField, indoorPressureField);
 
 #if USE_SD_CARD
     if (logFile)

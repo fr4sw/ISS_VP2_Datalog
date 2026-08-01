@@ -18,6 +18,9 @@
 #if USE_WIFI_IHM
     #include "WifiPortal.h"
 #endif
+#if USE_BME680
+    #include "BmeIndoor.h"
+#endif
 
 void setup()
 {
@@ -51,11 +54,24 @@ void setup()
 #if USE_WIFI_IHM
     wifiPortal.begin();
 #endif
+#if USE_BME680
+    bmeIndoor.begin();
+#endif
 }
 
 void loop()
 {
     timeManager.update();
+
+#if USE_BME680
+    bmeIndoor.update();
+    IndoorData indoorData;
+    bool indoorDataValid = bmeIndoor.getData(indoorData);
+    if (indoorDataValid == true)
+    {
+        dataLogger.updateIndoorData(indoorData);
+    }
+#endif
 
     IssRawFrame rawFrame;
     bool frameReceived = false;
