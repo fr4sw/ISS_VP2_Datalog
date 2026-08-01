@@ -20,6 +20,8 @@ La normalisation des unités et des mesures doit viser les bonnes pratiques en m
 
 Ce projet a été utilisé plusieurs années comme projet de fin d'étude en BTS Systèmes numériques/CIEL Electronique en partenariat avec l'association MeteoR-OI.
 
+Ressource : https://github.com/dekay/DavisRFM69/wiki/Message-Protocol
+
 # 3. Pré-requis - versions
 
 Testé :
