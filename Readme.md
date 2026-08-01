@@ -2,7 +2,7 @@
 
 # Readme
 
-Version : 0.1 Date : 2026-07-30
+Version : 0.1.2 Date : 2026-08-01
 
 Rédacteur : Rémi Chapdelaine
 
@@ -26,7 +26,11 @@ Testé :
 
 IDE/Core : Arduino IDE portable 1.8.19, core Seed nRF52 Boards 1.1.13, core ESP32 3.2.0-\>3.3.11
 
-Librairies : Adafruit BME680 2.0.6 (Adafruit BusIO 1.17.4, Adafruit unified sensors 1.1.15)
+Librairies : 
+
+Adafruit BME680 2.0.6 (Adafruit BusIO 1.17.4, Adafruit unified sensors 1.1.15) https://github.com/adafruit/Adafruit_BME680
+
+RTClib Adafruit (2.1.4) https://github.com/adafruit/RTClib
 
 # 4. Matériel Davis
 
