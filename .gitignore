@@ -39,7 +39,7 @@ fp-info-cache
 # Local project settings
 *.kicad_prl
 
-# Credentials
+# Credentials - informations confidentielles, mots de passe...
 credentials.h
 
 # PlatformIO et build
