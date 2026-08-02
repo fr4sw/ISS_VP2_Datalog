@@ -227,11 +227,12 @@ La lisibilité est prioritaire sur la concision.
 
 Le code doit pouvoir être compris plusieurs années après son écriture.
 
-# 15. Pas de code "intelligent"
+# 15. Pas de code "intelligent", éviter les astuces, préférer la lisibilité
 
-Les astuces de programmation sont évitées.
-
+Les astuces de programmation sont évitées. 
 Le code doit être explicite.
+
+En particulier on évitera au maximum l'utilisation de ? on préférera des if explicite.
 
 # 16. Pas de valeurs magiques
 
