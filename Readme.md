@@ -26,8 +26,9 @@ Ce projet a été utilisé plusieurs années comme projet de fin d'étude en BTS
 Testé :
 IDE/Core : Arduino IDE portable 1.8.19, core Seed nRF52 Boards 1.1.13, core ESP32 3.2.0-\>3.3.11
 Librairies : 
-- Adafruit BME680 2.0.6 (Adafruit BusIO 1.17.4, Adafruit unified sensors 1.1.15) https://github.com/adafruit/Adafruit_BME680
+- BME680 Adafruit (2.0.6) (Adafruit BusIO 1.17.4, Adafruit unified sensors 1.1.15) https://github.com/adafruit/Adafruit_BME680
 - RTClib Adafruit (2.1.4) https://github.com/adafruit/RTClib
+- TinyGPSplus mikalhart (1.0.3) (utile seulement si GPS - Cf config/boardConfig) https://github.com/mikalhart/TinyGPSPlus
 
 # 4. Matériel Davis
 
