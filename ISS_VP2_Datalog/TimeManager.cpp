@@ -1,27 +1,63 @@
 // ============================================================================
 // Fichier   : TimeManager.cpp
+// Remarque  : RTC et GPS sont toujours lus/ecrits en UTC, sous forme d'un
+//             compteur de secondes depuis l'epoque Unix (uint32_t, voir
+//             Rtc.cpp/Gps.cpp). Le seul endroit qui applique le decalage de
+//             fuseau horaire (Params::getTimezoneOffsetHours(), modifiable
+//             sans reprogrammer) est formatLocalDateTime() ci-dessous.
 // ============================================================================
 #include <Arduino.h>
 #include "TimeManager.h"
 #include "HalPins.h"
 #include "Config.h"
 #include "BoardConfig.h"
+#include "Params.h"
 #if (TIME_MODE == TIME_MODE_GPS_RTC) || (TIME_MODE == TIME_MODE_RTC_ONLY)
     #include "Rtc.h"
+#endif
+#if (TIME_MODE == TIME_MODE_GPS_RTC) || (TIME_MODE == TIME_MODE_GPS_ONLY)
+    #include "Gps.h"
+#endif
+#if (TIME_MODE == TIME_MODE_GPS_RTC) || (TIME_MODE == TIME_MODE_RTC_ONLY) || (TIME_MODE == TIME_MODE_GPS_ONLY)
+    #include <RTClib.h>
 #endif
 
 TimeManager timeManager;
 
+#if (TIME_MODE == TIME_MODE_GPS_RTC) || (TIME_MODE == TIME_MODE_RTC_ONLY) || (TIME_MODE == TIME_MODE_GPS_ONLY)
+// Applique le fuseau horaire (heures entieres, Params) a un horodatage UTC
+// et le formate en "YYYYMMDD"/"HHMMSS". Chaque valeur est explicitement
+// ramenee a la plage attendue par son format (%100 pour un champ 2
+// chiffres, %10000 pour un champ 4 chiffres) : sans cela, le compilateur
+// ne peut pas prouver que le resultat rentre dans un tampon de taille
+// exacte (avertissement -Wformat-truncation), meme si annee/mois/jour/
+// heure/minute/seconde sont en pratique toujours dans une plage valide.
+static void formatLocalDateTime(uint32_t utcUnixTime, char dateString[9], char timeString[7])
+{
+    int32_t  offsetSeconds = (int32_t)params.getTimezoneOffsetHours() * 3600L;
+    uint32_t localUnixTime = (uint32_t)((int64_t)utcUnixTime + (int64_t)offsetSeconds);
+    DateTime localDateTime(localUnixTime);
+
+    uint16_t yearValue   = localDateTime.year() % 10000;
+    uint8_t  monthValue  = localDateTime.month() % 100;
+    uint8_t  dayValue    = localDateTime.day() % 100;
+    uint8_t  hourValue   = localDateTime.hour() % 100;
+    uint8_t  minuteValue = localDateTime.minute() % 100;
+    uint8_t  secondValue = localDateTime.second() % 100;
+
+    snprintf(dateString, 9, "%04u%02u%02u", yearValue, monthValue, dayValue);
+    snprintf(timeString, 7, "%02u%02u%02u", hourValue, minuteValue, secondValue);
+}
+#endif
+
 void TimeManager::begin()
 {
-    gpsFix = false;
     rtcValid = false;
     manualStartMillis = 0;
 
 #if DEBUG
-    Serial.print(F("[TimeManager] Begin"));
-    Serial.print(F(" - "));
-    Serial.print(F("TIME_MODE : ")); Serial.print(TIME_MODE); Serial.println(F(" "));
+    Serial.print(F("[TimeManager] Begin, TIME_MODE = "));
+    Serial.println(TIME_MODE);
 #endif
 
 #if TIME_MODE == TIME_MODE_GPS_RTC
@@ -30,7 +66,7 @@ void TimeManager::begin()
     {
         Serial.println(F("[TimeManager] Erreur : RTC absent, mode GPS+RTC degrade"));
     }
-    Serial1.begin(UART_GPS_BAUD, SERIAL_8N1, PIN_GPS_RX, -1);
+    gpsBegin();   // resynchronise periodiquement le RTC en arriere-plan (voir Gps.cpp)
 
 #elif TIME_MODE == TIME_MODE_RTC_ONLY
     rtcValid = rtcBegin();
@@ -40,7 +76,7 @@ void TimeManager::begin()
     }
 
 #elif TIME_MODE == TIME_MODE_GPS_ONLY
-    Serial1.begin(UART_GPS_BAUD, SERIAL_8N1, PIN_GPS_RX, -1);
+    gpsBegin();
 
 #elif TIME_MODE == TIME_MODE_MANUAL
     manualStartMillis = millis();
@@ -54,49 +90,47 @@ void TimeManager::begin()
 void TimeManager::update()
 {
 #if (TIME_MODE == TIME_MODE_GPS_RTC) || (TIME_MODE == TIME_MODE_GPS_ONLY)
-    gpsFix = gpsUpdateAndCheckFix();
+    gpsUpdate();
 #endif
 }
 
 bool TimeManager::now(char dateString[9], char timeString[7])
 {
-#if TIME_MODE == TIME_MODE_GPS_RTC
-    if (gpsFix == true)
+#if (TIME_MODE == TIME_MODE_GPS_RTC) || (TIME_MODE == TIME_MODE_RTC_ONLY)
+    // Le RTC est l'unique source lue ici : en mode GPS_RTC, c'est le GPS
+    // (via gpsUpdate(), appele dans update()) qui le tient a jour en
+    // arriere-plan - inutile de dupliquer la logique de choix GPS/RTC.
+    if (rtcValid == false)
     {
-        gpsCopyDateTime(dateString, timeString);
-        return true;
+        dateString[0] = '\0';
+        timeString[0] = '\0';
+        Serial.println(F("[TimeManager] Erreur : RTC indisponible"));
+        return false;
     }
-    if (rtcValid == true)
+    uint32_t utcUnixTime = 0;
+    bool available = rtcNow(utcUnixTime);
+    if (available == false)
     {
-        rtcCopyDateTime(dateString, timeString);
-        return true;
+        dateString[0] = '\0';
+        timeString[0] = '\0';
+        Serial.println(F("[TimeManager] Erreur : lecture RTC impossible"));
+        return false;
     }
-    dateString[0] = '\0';
-    timeString[0] = '\0';
-    Serial.println(F("[TimeManager] Erreur : ni GPS ni RTC disponibles"));
-    return false;
-
-#elif TIME_MODE == TIME_MODE_RTC_ONLY
-    if (rtcValid == true)
-    {
-        rtcCopyDateTime(dateString, timeString);
-        return true;
-    }
-    dateString[0] = '\0';
-    timeString[0] = '\0';
-    Serial.println(F("[TimeManager] Erreur : RTC indisponible"));
-    return false;
+    formatLocalDateTime(utcUnixTime, dateString, timeString);
+    return true;
 
 #elif TIME_MODE == TIME_MODE_GPS_ONLY
-    if (gpsFix == true)
+    uint32_t utcUnixTime = 0;
+    bool available = gpsNow(utcUnixTime);
+    if (available == false)
     {
-        gpsCopyDateTime(dateString, timeString);
-        return true;
+        dateString[0] = '\0';
+        timeString[0] = '\0';
+        Serial.println(F("[TimeManager] Erreur : aucun point GPS disponible pour l'instant"));
+        return false;
     }
-    dateString[0] = '\0';
-    timeString[0] = '\0';
-    Serial.println(F("[TimeManager] Erreur : pas de fix GPS"));
-    return false;
+    formatLocalDateTime(utcUnixTime, dateString, timeString);
+    return true;
 
 #elif TIME_MODE == TIME_MODE_MANUAL
     unsigned long elapsedSeconds = (millis() - manualStartMillis) / 1000;
@@ -108,8 +142,8 @@ bool TimeManager::now(char dateString[9], char timeString[7])
     unsigned long currentSecond = secondsToday % 60UL;
 
     // Limitation connue : ne gere pas le changement de mois (voir ToDoList.md).
-    snprintf(dateString, 9, "%04d%02d%02lu", MANUAL_TIME_YEAR, MANUAL_TIME_MONTH, currentDay);
-    snprintf(timeString, 7, "%02lu%02lu%02lu", currentHour, currentMinute, currentSecond);
+    snprintf(dateString, 9, "%04d%02d%02lu", MANUAL_TIME_YEAR, MANUAL_TIME_MONTH, currentDay % 100);
+    snprintf(timeString, 7, "%02lu%02lu%02lu", currentHour % 100, currentMinute % 100, currentSecond % 100);
     return true;
 #endif
 }

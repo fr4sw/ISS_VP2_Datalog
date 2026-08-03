@@ -25,6 +25,16 @@
 #define ISS_TYPE_HUMIDITY    0xA
 #define ISS_TYPE_RAIN        0xE
 
+// Direction du vent : la console Davis quantifie la direction sur 16
+// secteurs de la rose des vents (22.5 degres chacun) pour determiner la
+// direction "dominante" d'un intervalle d'archivage (majorite des
+// echantillons). Nord = 0 degre (jamais 360, convention WeeWx/Weatherlink).
+// Constantes partagees entre IssCommon (conversion brute) et DataLogger
+// (histogramme de synthese sur l'intervalle).
+// Référence : docs/Davis_Data_Archived_v3.pdf (definition champ "Wind Dir")
+#define WIND_DIR_SECTOR_COUNT       16
+#define WIND_DIR_SECTOR_WIDTH_DEG   22.5f
+
 struct IssRawFrame
 {
     uint8_t bytes[ISS_FRAME_MAX_LENGTH];
@@ -49,5 +59,24 @@ struct IssData
     bool     frameValid;
 };
 
+// Frequence de transmission theorique de l'ISS, utilisee pour calculer un
+// taux de reception (trames recues / trames attendues sur un intervalle).
+// Chaque station transmet en moyenne toutes les 2.5s (ID 1, "raw" 0), avec
+// un leger supplement par ID pour eviter les collisions entre stations
+// partageant la meme frequence radio.
+// Référence : VantageSerialProtocolDocs_v261.pdf, §XIV.6 "Calculating ISS
+// reception" (formule VP2/Vantage Vue). stationId ici est le champ brut
+// 0-7 extrait de la trame, qui correspond directement a "ID-1" de la
+// documentation Davis (ID humain 1-8, affiche sur le dip-switch).
+#define ISS_BASE_SECONDS_PER_PACKET       2.5f
+#define ISS_EXTRA_SECONDS_PER_PACKET_ID   (1.0f / 16.0f)
+
+float issSecondsPerPacket(uint8_t stationId);
 bool checkCRC(const uint8_t frameBytes[], uint8_t frameLength);
 bool decodeFrame(const IssRawFrame &rawFrame, IssData &result);
+
+// Reutilisees par DataLogger pour l'histogramme de direction dominante
+// (règle 6 : la correspondance secteur<->degre n'existe qu'a un seul
+// endroit, meme si elle est utilisee par deux modules).
+uint8_t  windDirectionSectorFromDeg(uint16_t degrees);
+uint16_t windDirectionDegFromSector(uint8_t sector);

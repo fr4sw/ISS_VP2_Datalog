@@ -5,7 +5,6 @@
 //             Tous les autres modules appellent ces fonctions sans jamais
 //             tester eux-memes ARDUINO_ARCH_xxx (règle 4).
 // Fonctions : configureRs485Pins() - applique setPins() si necessaire.
-//             configureGpsPins()  - idem pour le GPS/Mesh partage.
 //             configureI2cPins()  - idem pour Wire.
 //             configureSpiPins()  - idem pour SPI (hors CS, gere a part).
 //             beginI2cBus()       - point unique d'initialisation du bus
@@ -13,6 +12,16 @@
 //                                   Idempotent : plusieurs modules peuvent
 //                                   partager le meme bus I2C sans double
 //                                   initialisation (ex : BmeIndoor et Rtc).
+//             beginSdCard()       - point unique d'initialisation de la
+//                                   carte SD (broches + SPI + SD.begin()).
+//                                   Idempotent, meme principe que
+//                                   beginI2cBus() (ex : DataLogger, Params,
+//                                   EventLog partagent la meme carte).
+//                                   Renvoie l'etat (true = carte prete).
+//             Serial2 (GPS/Mesh) n'a pas besoin de fonction configureXxxPins() :
+//             ses broches sont fixes a la construction de l'objet (voir plus
+//             bas), seul Serial2.begin(baud) reste a faire par le module
+//             qui l'utilise (Gps.cpp).
 // Remarque  : Declaration du second peripherique UART materiel (UARTE1),
 //             distinct de Serial1 (UARTE0, deja dedie au RS485).
 //             Les symboles UARTE1_IRQn et NRF_UARTE1_BASE sont fournis
@@ -30,6 +39,7 @@ void configureRs485Pins();
 void configureI2cPins();
 void configureSpiPins();
 void beginI2cBus();
+bool beginSdCard();
 
 #if defined(ARDUINO_ARCH_NRF52)
     extern Uart Serial2;   // GPS/Mesh, commute via CD4053

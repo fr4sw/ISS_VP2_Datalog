@@ -7,6 +7,7 @@
 #include <Arduino.h>
 #include "Power.h"
 #include "BoardConfig.h"
+#include "EventLog.h"
 
 Power power;
 
@@ -27,6 +28,7 @@ void Power::enableGps()
 #if defined(PIN_GPS_ENABLE)
     digitalWrite(PIN_GPS_ENABLE, POWER_ENABLE_ACTIVE_LEVEL);
     Serial.println(F("[Power] GPS active (niveau bas)"));
+    logEvent(F("GPS active"));
 #else
     Serial.println(F("[Power] Avertissement : PIN_GPS_ENABLE non definie pour cette carte"));
 #endif
@@ -37,6 +39,7 @@ void Power::disableGps()
 #if defined(PIN_GPS_ENABLE)
     digitalWrite(PIN_GPS_ENABLE, POWER_ENABLE_INACTIVE_LEVEL);
     Serial.println(F("[Power] GPS coupe (niveau haut)"));
+    logEvent(F("GPS coupe"));
 #endif
 }
 

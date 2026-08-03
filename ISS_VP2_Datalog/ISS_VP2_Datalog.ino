@@ -7,6 +7,9 @@
 #include "BoardConfig.h"
 #include "TimeManager.h"
 #include "Power.h"
+#include "Params.h"
+#include "SerialConsole.h"
+#include "EventLog.h"
 #include "DataLogger.h"
 
 #if ISS_WIRELESS
@@ -40,7 +43,16 @@ void setup()
         delay(10);
     }
 
-    Serial.println(F("[Main] Demarrage ISS_VP2_Datalog"));    
+    Serial.println(F("[Main] Demarrage ISS_VP2_Datalog"));
+
+    power.begin();
+    serialConsoleBegin();
+
+    // Params et EventLog ont besoin de la carte SD : leur begin() appelle
+    // HalPins::beginSdCard() (idempotent), qui l'initialise si necessaire.
+    params.begin();
+    logEventBegin();
+    logEvent(F("Demarrage ISS_VP2_Datalog"));
 
     timeManager.begin();
     dataLogger.begin();
@@ -61,6 +73,7 @@ void setup()
 
 void loop()
 {
+    serialConsoleUpdate();
     timeManager.update();
 
 #if USE_BME680
@@ -85,23 +98,23 @@ void loop()
     frameReceived = issWireless.getFrame(rawFrame);
 #endif
 
-  if (frameReceived == true)
-  {
-#if DEBUG_RAW_FRAMES
-    Serial.print(F("[Main] Trame brute : "));
-    for (uint8_t index = 0; index < rawFrame.length; index++)
+    if (frameReceived == true)
     {
-        if (rawFrame.bytes[index] < 0x10)
+#if DEBUG_RAW_FRAMES
+        Serial.print(F("[Main] Trame brute : "));
+        for (uint8_t index = 0; index < rawFrame.length; index++)
         {
-            Serial.print(F("0"));
+            if (rawFrame.bytes[index] < 0x10)
+            {
+                Serial.print(F("0"));
+            }
+            Serial.print(rawFrame.bytes[index], HEX);
+            Serial.print(F(" "));
         }
-        Serial.print(rawFrame.bytes[index], HEX);
-        Serial.print(F(" "));
-    }
-    Serial.println();
+        Serial.println();
 #endif
 
-    IssData decodedData;
+        IssData decodedData;
         bool decodeSuccess = decodeFrame(rawFrame, decodedData);
         if (decodeSuccess == true)
         {

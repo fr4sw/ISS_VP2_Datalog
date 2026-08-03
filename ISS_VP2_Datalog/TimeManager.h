@@ -21,7 +21,6 @@ public:
     bool now(char dateString[9], char timeString[7]);
 
 private:
-    bool gpsFix;
     bool rtcValid;
     unsigned long manualStartMillis;
 };

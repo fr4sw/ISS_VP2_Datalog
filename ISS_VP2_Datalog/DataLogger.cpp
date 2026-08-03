@@ -1,5 +1,5 @@
 // ============================================================================
-// Fichier   : DataLogger.cpp (complet, corrige)
+// Fichier   : DataLogger.cpp
 // ============================================================================
 #include <Arduino.h>
 #include <SPI.h>
@@ -8,6 +8,8 @@
 #include "Config.h"
 #include "TimeManager.h"
 #include "HalPins.h"
+#include "Params.h"
+#include "EventLog.h"
 
 DataLogger dataLogger;
 
@@ -41,35 +43,27 @@ void DataLogger::begin()
     lastWriteMillis = 0;
     currentState.frameValid = false;
     currentIndoorState.dataValid = false;
+    windSpeedSumKph = 0;
+    windSpeedSampleCount = 0;
+    windDirectionSampleCount = 0;
+    for (uint8_t sectorIndex = 0; sectorIndex < WIND_DIR_SECTOR_COUNT; sectorIndex++)
+    {
+        windDirectionSectorCounts[sectorIndex] = 0;
+    }
 
 #if USE_SD_CARD
-    pinMode(PIN_SD_CS, OUTPUT);
-    digitalWrite(PIN_SD_CS, HIGH);
-
-    configureSpiPins();
-    SPI.begin();
-
-    bool sdReady = SD.begin(SPI_SD_FREQUENCY, PIN_SD_CS);
+    bool sdReady = beginSdCard();
     if (sdReady == false)
     {
-        Serial.println(F("[DataLogger] Erreur : carte SD non detectee"));
         return;
     }
 
     SdFile::dateTimeCallback(sdDateTimeCallback);
 
     // Nom de fichier construit a partir de la date/heure de demarrage,
-    // format court 8.3 impose par FAT : VPddHHMM.CSV (jour+heure+minute).
+    // format court 8.3 impose par FAT : JJHHMMSS.CSV (jour+heure+minute).
     // Un nouveau fichier distinct est ainsi cree a chaque redemarrage,
     // limitant le risque de perte de donnees en cas de fichier corrompu.
-    // Remarque  : Nom de fichier long construit a partir de la date/heure de
-//             demarrage, sur le modele de l'ancien programme ESP32
-//             (rotation vers YYYYMMDDHHMMSS.CSV une fois l'heure connue).
-//             Necessite que la bibliotheque SD/SdFat du core nRF52840
-//             (Seeeduino, version 1.2.4) accepte les noms longs (LFN),
-//             a verifier a la compilation/execution - sinon, elle
-//             tronquera silencieusement au format 8.3.
-// ============================================================================
     char dateString[9];
     char timeString[7];
     char logFileName[13];
@@ -77,13 +71,11 @@ void DataLogger::begin()
 
     if (timeValid == true)
     {
-    // Format : JJHHMMSS.CSV (jour du mois + heure complete), 8 caracteres
-    // avant l'extension, conforme au 8.3.
-    char dayPart[3];
-    dayPart[0] = dateString[6];
-    dayPart[1] = dateString[7];
-    dayPart[2] = '\0';
-    snprintf(logFileName, sizeof(logFileName), "%s%s.CSV", dayPart, timeString);
+        char dayPart[3];
+        dayPart[0] = dateString[6];
+        dayPart[1] = dateString[7];
+        dayPart[2] = '\0';
+        snprintf(logFileName, sizeof(logFileName), "%s%s.CSV", dayPart, timeString);
     }
     else
     {
@@ -94,14 +86,15 @@ void DataLogger::begin()
     if (!logFile)
     {
         Serial.println(F("[DataLogger] Erreur : impossible d'ouvrir le fichier de log"));
-            Serial.println(logFileName);
+        Serial.println(logFileName);
         return;
     }
 
     Serial.print(F("[DataLogger] Fichier de log cree : "));
     Serial.println(logFileName);
+    logEvent(F("Nouveau fichier de log CSV cree"));
 
-    logFile.println(F("seq,date,heure,stationId,batterieFaible,temperatureC,humidite,rayonnementSolaire,indexUV,pluieMmH,compteurPluie,rafaleKph,directionVent,temperatureInterieureC,humiditeInterieure,pressionInterieureHpa"));
+    logFile.println(F("seq,date,heure,stationId,batterieFaible,temperatureC,humidite,rayonnementSolaire,indexUV,pluieMmH,compteurPluie,rafaleKph,vitesseVentKph,directionVent,temperatureInterieureC,humiditeInterieure,pressionInterieureHpa"));
     logFile.flush();
 #endif
 }
@@ -130,6 +123,25 @@ void DataLogger::updateIndoorData(const IndoorData &data)
     currentIndoorState = data;
 }
 
+// Accumule un echantillon de vitesse/direction (appele a CHAQUE trame,
+// puisque le protocole Davis transmet vitesse+direction sur toutes les
+// trames). La direction n'est comptabilisee dans l'histogramme que si le
+// vent souffle (vitesse > 0), conformement a la definition Davis du champ
+// "Wind Dir" archive (voir docs/Davis_Data_Archived_v3.pdf : "si la vitesse
+// du vent est quasiment toujours a 0, aucune direction n'est indiquee").
+void DataLogger::accumulateWindSample(uint8_t windSpeedKph, uint16_t windDirectionDeg)
+{
+    windSpeedSumKph = windSpeedSumKph + windSpeedKph;
+    windSpeedSampleCount = windSpeedSampleCount + 1;
+
+    if (windSpeedKph > 0)
+    {
+        uint8_t sector = windDirectionSectorFromDeg(windDirectionDeg);
+        windDirectionSectorCounts[sector] = windDirectionSectorCounts[sector] + 1;
+        windDirectionSampleCount = windDirectionSampleCount + 1;
+    }
+}
+
 void DataLogger::logRecord(const IssData &data)
 {
     if (data.frameValid == false)
@@ -143,28 +155,38 @@ void DataLogger::logRecord(const IssData &data)
 
     currentState.stationId = data.stationId;
     currentState.batteryLow = data.batteryLow;
-    currentState.windSpeedKph = data.windSpeedKph;
-    currentState.windDirectionDeg = data.windDirectionDeg;
     currentState.frameValid = true;
 
+    accumulateWindSample(data.windSpeedKph, data.windDirectionDeg);
+
+    // règle 6 : les codes de trame ne sont testes qu'a un seul endroit dans
+    // tout le projet, via les constantes ISS_TYPE_* de IssCommon.h (jamais
+    // recopies en litteral).
     switch (data.sensorType)
     {
-        case 0x08: currentState.temperatureOutside = data.temperatureOutside; break;
-        case 0x0A: currentState.humidityOutside = data.humidityOutside; break;
-        case 0x06: currentState.solarRadiation = data.solarRadiation; break;
-        case 0x04: currentState.uvIndex = data.uvIndex; break;
-        case 0x0E: currentState.rainRateMmPerHour = data.rainRateMmPerHour; break;
-        case 0x00: currentState.rainTipCount = data.rainTipCount; break;
-        case 0x02: currentState.windGustKph = data.windGustKph; break;
+        case ISS_TYPE_TEMP:     currentState.temperatureOutside = data.temperatureOutside; break;
+        case ISS_TYPE_HUMIDITY: currentState.humidityOutside = data.humidityOutside; break;
+        case ISS_TYPE_SOLAR:    currentState.solarRadiation = data.solarRadiation; break;
+        case ISS_TYPE_UV:       currentState.uvIndex = data.uvIndex; break;
+        case ISS_TYPE_RAINRATE: currentState.rainRateMmPerHour = data.rainRateMmPerHour; break;
+        case ISS_TYPE_RAIN:     currentState.rainTipCount = data.rainTipCount; break;
+        case ISS_TYPE_WINDGUST: currentState.windGustKph = data.windGustKph; break;
         default: break;
     }
 
-    if ((millis() - lastWriteMillis) < LOG_WRITE_INTERVAL_MS)
+    uint32_t logWriteIntervalMs = params.getLogWriteIntervalMs();
+    bool writeDue = (logWriteIntervalMs == 0) || ((millis() - lastWriteMillis) >= logWriteIntervalMs);
+    if (writeDue == false)
     {
         return;
     }
     lastWriteMillis = millis();
 
+    writeLine();
+}
+
+void DataLogger::writeLine()
+{
     char dateString[9];
     char timeString[7];
     bool timeValid = timeManager.now(dateString, timeString);
@@ -175,6 +197,37 @@ void DataLogger::logRecord(const IssData &data)
     }
 
     sequenceNumber = sequenceNumber + 1;
+
+    // Synthese du vent sur l'intervalle ecoule (voir DataLogger.h) :
+    // vitesse moyenne, direction majoritaire (secteur le plus echantillonne,
+    // "NA" si calme sur tout l'intervalle - jamais 0, qui serait une vraie
+    // valeur Nord).
+    uint8_t windSpeedAverageKph = 0;
+    if (windSpeedSampleCount > 0)
+    {
+        windSpeedAverageKph = (uint8_t)(windSpeedSumKph / windSpeedSampleCount);
+    }
+
+    char windDirectionField[8];
+    if (windDirectionSampleCount == 0)
+    {
+        snprintf(windDirectionField, sizeof(windDirectionField), "NA");
+    }
+    else
+    {
+        uint8_t majoritySector = 0;
+        uint16_t majorityCount = 0;
+        for (uint8_t sectorIndex = 0; sectorIndex < WIND_DIR_SECTOR_COUNT; sectorIndex++)
+        {
+            if (windDirectionSectorCounts[sectorIndex] > majorityCount)
+            {
+                majorityCount = windDirectionSectorCounts[sectorIndex];
+                majoritySector = sectorIndex;
+            }
+        }
+        uint16_t majorityDirectionDeg = windDirectionDegFromSector(majoritySector);
+        snprintf(windDirectionField, sizeof(windDirectionField), "%u", majorityDirectionDeg);
+    }
 
     // Champs du capteur interieur formates a part : affiche "NA" tant
     // qu'aucune mesure valide n'a ete recue depuis le demarrage (règle 6 -
@@ -197,13 +250,13 @@ void DataLogger::logRecord(const IssData &data)
     }
 
     char line[240];
-    snprintf(line, sizeof(line), "%lu,%s,%s,%u,%u,%.1f,%.1f,%u,%.1f,%.1f,%u,%u,%u,%s,%s,%s",
+    snprintf(line, sizeof(line), "%lu,%s,%s,%u,%u,%.1f,%.1f,%u,%.1f,%.1f,%u,%u,%u,%s,%s,%s,%s",
              sequenceNumber, dateString, timeString,
              currentState.stationId, currentState.batteryLow,
              currentState.temperatureOutside, currentState.humidityOutside,
              currentState.solarRadiation, currentState.uvIndex,
              currentState.rainRateMmPerHour, currentState.rainTipCount,
-             currentState.windGustKph, currentState.windDirectionDeg,
+             currentState.windGustKph, windSpeedAverageKph, windDirectionField,
              indoorTemperatureField, indoorHumidityField, indoorPressureField);
 
 #if USE_SD_CARD
@@ -215,6 +268,19 @@ void DataLogger::logRecord(const IssData &data)
 #endif
 
     Serial.println(line);
+
+    resetWindAccumulators();
+}
+
+void DataLogger::resetWindAccumulators()
+{
+    windSpeedSumKph = 0;
+    windSpeedSampleCount = 0;
+    windDirectionSampleCount = 0;
+    for (uint8_t sectorIndex = 0; sectorIndex < WIND_DIR_SECTOR_COUNT; sectorIndex++)
+    {
+        windDirectionSectorCounts[sectorIndex] = 0;
+    }
 }
 
 void DataLogger::update()

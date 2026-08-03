@@ -3,7 +3,9 @@
 // ============================================================================
 #include <Arduino.h>
 #include <Wire.h>
+#include <SD.h>
 #include "HalPins.h"
+#include "Config.h"
 
 // Remarque   : Cast vers NRF_UARTE_Type*, pas NRF_UART_Type*. L'adresse
 //             memoire NRF_UARTE1_BASE reste correcte (confirmee dans
@@ -72,4 +74,35 @@ void configureSpiPins()
     SPI.setPins(PIN_SD_SPI_MISO, PIN_SD_SPI_SCK, PIN_SD_SPI_MOSI);
 #endif
     // Sur ESP32, SPI.begin(sck, miso, mosi, cs) prend les broches directement.
+}
+
+bool beginSdCard()
+{
+    // Idempotent, meme principe que beginI2cBus() : DataLogger, Params et
+    // EventLog partagent tous la meme carte SD et appellent chacun cette
+    // fonction depuis leur propre begin(), sans risquer une double
+    // initialisation du bus SPI/de la carte.
+    static bool sdCardStarted = false;
+    static bool sdCardReady = false;
+    if (sdCardStarted == true)
+    {
+        return sdCardReady;
+    }
+    sdCardStarted = true;
+
+#if USE_SD_CARD
+    pinMode(PIN_SD_CS, OUTPUT);
+    digitalWrite(PIN_SD_CS, HIGH);
+
+    configureSpiPins();
+    SPI.begin();
+
+    sdCardReady = SD.begin(SPI_SD_FREQUENCY, PIN_SD_CS);
+    if (sdCardReady == false)
+    {
+        Serial.println(F("[HalPins] Erreur : carte SD non detectee"));
+    }
+#endif
+
+    return sdCardReady;
 }

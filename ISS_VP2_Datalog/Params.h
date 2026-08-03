@@ -1,0 +1,62 @@
+// ============================================================================
+// Fichier   : Params.h
+// Rôle      : Parametres modifiables SANS reprogrammer (règle : contrairement
+//             a Config.h, qui fixe les valeurs par defaut a la compilation).
+//             Persistes dans un fichier texte sur la carte SD
+//             (Config.h : PARAMS_FILE_NAME), lisible/modifiable directement
+//             depuis un PC (carte retiree ou montee en mass-storage), et
+//             modifiable a chaud via SerialConsole (moniteur serie USB).
+//             Si la carte SD est absente ou le fichier introuvable, les
+//             valeurs par defaut de Config.h sont utilisees (fonctionnement
+//             degrade mais jamais bloquant).
+// Fonctions : begin()                     - charge les parametres (SD, sinon
+//                                           defauts Config.h). A appeler
+//                                           apres HalPins::beginSdCard().
+//             save()                      - reecrit le fichier de parametres
+//                                           avec les valeurs courantes.
+//             getTimezoneOffsetHours()    - decalage local par rapport a
+//                                           l'UTC, en heures entieres (ex :
+//                                           +4 pour La Reunion). Les fuseaux
+//                                           a la demi-heure ne sont pas
+//                                           geres (cas rare, voir Config.h).
+//             setTimezoneOffsetHours()
+//             getLogWriteIntervalMs()     - periode d'ecriture CSV ; 0 =
+//                                           ecriture a chaque trame recue.
+//             setLogWriteIntervalMs()
+//             getGpsBaudRate()            - debit UART du GPS (bauds).
+//             setGpsBaudRate()
+// Format fichier PARAMS_FILE_NAME : une ligne par parametre, "CLE=VALEUR"
+//             (nombres entiers uniquement, pas d'espaces), lignes commencant
+//             par '#' ignorees (commentaires). Exemple :
+//                 # Fuseau horaire de La Reunion (UTC+4)
+//                 TZ=4
+//                 LOGINTERVAL=30000
+//                 GPSBAUD=9600
+// ============================================================================
+#pragma once
+#include <Arduino.h>
+
+class Params
+{
+public:
+    void begin();
+    void save();
+
+    int8_t   getTimezoneOffsetHours() const;
+    void     setTimezoneOffsetHours(int8_t hours);
+
+    uint32_t getLogWriteIntervalMs() const;
+    void     setLogWriteIntervalMs(uint32_t intervalMs);
+
+    uint32_t getGpsBaudRate() const;
+    void     setGpsBaudRate(uint32_t baudRate);
+
+private:
+    void load();
+
+    int8_t   timezoneOffsetHours;
+    uint32_t logWriteIntervalMs;
+    uint32_t gpsBaudRate;
+};
+
+extern Params params;

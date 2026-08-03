@@ -6,25 +6,17 @@
 #include "Rtc.h"
 #include "HalPins.h"
 #include "Config.h"
+#include "EventLog.h"
 
 static RTC_DS3231 rtcDevice;
-
-// Ecrit les valeurs MANUAL_TIME_* de Config.h dans le RTC. Fonction unique
-// utilisee par les deux cas de reecriture (règle 20 : une seule tache,
-// appelee depuis plusieurs points plutot que dupliquee).
-static void rtcApplyManualTime()
-{
-    rtcDevice.adjust(DateTime(MANUAL_TIME_YEAR, MANUAL_TIME_MONTH, MANUAL_TIME_DAY,
-                               MANUAL_TIME_HOUR, MANUAL_TIME_MINUTE, MANUAL_TIME_SECOND));
-    Serial.println(F("[Rtc] Horodatage RTC ecrit avec les valeurs MANUAL_TIME_* de Config.h"));
-}
+static bool        rtcDeviceReady = false;
 
 bool rtcBegin()
 {
     beginI2cBus();
 
-    bool devicePresent = rtcDevice.begin(&Wire);
-    if (devicePresent == false)
+    rtcDeviceReady = rtcDevice.begin(&Wire);
+    if (rtcDeviceReady == false)
     {
         Serial.println(F("[Rtc] Erreur : DS3231 non detecte"));
         return false;
@@ -32,30 +24,53 @@ bool rtcBegin()
 
 #if RTC_FORCE_MANUAL_TIME
     Serial.println(F("[Rtc] RTC_FORCE_MANUAL_TIME actif (Config.h) : reecriture obligatoire"));
-    rtcApplyManualTime();
+    rtcSetDateTime(DateTime(MANUAL_TIME_YEAR, MANUAL_TIME_MONTH, MANUAL_TIME_DAY,
+                             MANUAL_TIME_HOUR, MANUAL_TIME_MINUTE, MANUAL_TIME_SECOND));
 #else
     bool timeNotReliable = rtcDevice.lostPower();
     if (timeNotReliable == true)
     {
         Serial.println(F("[Rtc] RTC non fiable (perte d'alimentation detectee) : reinitialisation"));
-        rtcApplyManualTime();
+        rtcSetDateTime(DateTime(MANUAL_TIME_YEAR, MANUAL_TIME_MONTH, MANUAL_TIME_DAY,
+                                 MANUAL_TIME_HOUR, MANUAL_TIME_MINUTE, MANUAL_TIME_SECOND));
     }
   #if DEBUG
-    else {Serial.print(F("[Rtc] Rtc OK"));
-    Serial.print(F(" - "));
-    Serial.print(F("TIME_MODE : ")); Serial.print(TIME_MODE); Serial.println(F(" "));
+    else
+    {
+        Serial.println(F("[Rtc] RTC OK, horodatage conserve depuis la derniere mise a l'heure"));
     }
   #endif
-    
 #endif
 
     return true;
 }
 
-void rtcCopyDateTime(char dateString[9], char timeString[7])
+bool rtcNow(uint32_t &utcUnixTime)
 {
-    DateTime currentDateTime = rtcDevice.now();
+    if (rtcDeviceReady == false)
+    {
+        return false;
+    }
+    utcUnixTime = rtcDevice.now().unixtime();
+    return true;
+}
 
-    snprintf(dateString, 9, "%04d%02d%02d", currentDateTime.year(), currentDateTime.month(), currentDateTime.day());
-    snprintf(timeString, 7, "%02d%02d%02d", currentDateTime.hour(), currentDateTime.minute(), currentDateTime.second());
+void rtcSetDateTime(const DateTime &dateTime)
+{
+    rtcDevice.adjust(dateTime);
+
+    Serial.print(F("[Rtc] Horodatage RTC (UTC) ecrit : "));
+    Serial.print(dateTime.year());
+    Serial.print(F("-"));
+    Serial.print(dateTime.month());
+    Serial.print(F("-"));
+    Serial.print(dateTime.day());
+    Serial.print(F(" "));
+    Serial.print(dateTime.hour());
+    Serial.print(F(":"));
+    Serial.print(dateTime.minute());
+    Serial.print(F(":"));
+    Serial.println(dateTime.second());
+
+    logEvent(F("Ecriture RTC (resynchronisation)"));
 }

@@ -29,7 +29,7 @@ void BmeIndoor::begin()
 #if USE_BME680
     beginI2cBus();
 
-    bool beginSuccess = bmeSensor.begin(BME680_I2C_ADDRESS, &Wire);
+    bool beginSuccess = bmeSensor.begin(BME680_I2C_ADDRESS);
     if (beginSuccess == false)
     {
         Serial.println(F("[BmeIndoor] Erreur : BME680 non detecte"));
