@@ -2,7 +2,7 @@
 
 # Readme
 
-Version : 0.1.2 Date : 2026-08-01
+Version : 0.1.3 Date : 2026-08-04
 
 Rédacteur : Rémi Chapdelaine
 
@@ -15,9 +15,15 @@ Ce projet a vocation a utiliser directement l'ISS (ensemble de capteurs) sans n�
 L'horodatage fiable fait partie des principes important pour pouvoir recoller les informations des différentes stations.
 
 La normalisation des unités et des mesures doit viser les bonnes pratiques en météorologie, dans les limites de ce qui est fourni par Davis.
-## 1A. Etat actuel (1/8/2026)
+## 1A. Etat actuel (4/8/2026 v0.1.3)
 
-En cours de mise au point, fonctionnel avec ISS filaire (seul temp et Hum testés), nRF52840-Xiao, BME680, RTC DS3231, carte µSD
+En cours de mise au point, fonctionnel avec ISS filaire (seul temp et Hum testés), nRF52840-Xiao, BME680, RTC DS3231, GPS, carte µSD.
+Certains paramétrage peuvent s'effectuer depuis le moniteur série (serial).
+Sur la carte SD on écrit toutes les 30s (paramétrable) dans un fichier .csv; toutes les 5 minutes (paramétrable) on fait la synthèse (comme le fait WeeWx/Davis...) et on enregistre aussi (c'est cela qu'on enverra).
+On écrit aussi un EVENTS.log qui récapitule les évènements principaux (dont les durée d'allumage GPS et les décalages horaires - permettront d'estimer la possibilité d'allonger la durée de recalage).
+-> release v0.1.3
+
+La prochaine étape est l'implantation du Meshtastic en protobuff simplifié.
 
 # 2. Contexte
 Ce projet a été utilisé plusieurs années comme projet de fin d'étude en BTS Systèmes numériques/CIEL Electronique en partenariat avec l'association MeteoR-OI.
