@@ -74,6 +74,8 @@ Si une ligne nécessite une longue explication, elle doit être réécrite de ma
 
 Une partie du développement a été réalisé avec l'aide de Claude Sonnet 5, en corrigeant ses erreurs et affinant les possibiités.
 
+Les règles de codages sont dans le document CodingRules.md
+
 # 7. Gestion de l'alimentation
 
 La cible visée étant l'autonomie totale (énergétique et réseau) la préservation de l'énergie devra etre incluse dans les réflexions.
