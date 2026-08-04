@@ -51,6 +51,14 @@ void DataLogger::begin()
         windDirectionSectorCounts[sectorIndex] = 0;
     }
 
+    rainTipBaselineSet = false;
+    previousRainTipCount = 0;
+
+    transmissionSlotInitialized = false;
+    lastTransmissionSlotIndex = -1;
+    framesReceivedInSlot = 0;
+    lastReceptionPercent = 0;
+
 #if USE_SD_CARD
     bool sdReady = beginSdCard();
     if (sdReady == false)
@@ -94,7 +102,7 @@ void DataLogger::begin()
     Serial.println(logFileName);
     logEvent(F("Nouveau fichier de log CSV cree"));
 
-    logFile.println(F("seq,date,heure,stationId,batterieFaible,temperatureC,humidite,rayonnementSolaire,indexUV,pluieMmH,compteurPluie,rafaleKph,vitesseVentKph,directionVent,temperatureInterieureC,humiditeInterieure,pressionInterieureHpa"));
+    logFile.println(F("seq,date,heure,stationId,batterieFaible,temperatureC,humidite,rayonnementSolaire,indexUV,pluieMmH,compteurPluie,rafaleKph,vitesseVentKph,directionVent,temperatureInterieureC,humiditeInterieure,pressionInterieureHpa,creneauTransmission,tauxReceptionPct"));
     logFile.flush();
 #endif
 }
@@ -158,6 +166,29 @@ void DataLogger::logRecord(const IssData &data)
     currentState.frameValid = true;
 
     accumulateWindSample(data.windSpeedKph, data.windDirectionDeg);
+    framesReceivedInSlot = framesReceivedInSlot + 1;
+
+    // Heure courante lue UNE SEULE fois par trame : sert a la fois a
+    // detecter le franchissement du creneau de transmission ci-dessous, et
+    // a l'ecriture eventuelle de la ligne CSV plus bas (evite de relire
+    // deux fois le RTC/GPS pour la meme trame).
+    char dateString[9];
+    char timeString[7];
+    bool timeValid = timeManager.now(dateString, timeString);
+
+    // Le creneau (Config.h : TRANSMISSION_SLOT_MINUTES) est verifie a
+    // CHAQUE trame (pas seulement a l'ecriture), pour detecter son
+    // franchissement au plus tot et forcer une ecriture au bon moment.
+    bool transmissionSlotRow = false;
+    if (timeValid == true)
+    {
+        transmissionSlotRow = checkReceptionSlotBoundary(timeString, data.stationId);
+    }
+
+    // Un clic de pluie (changement du compteur, pas seulement une
+    // augmentation - le compteur est un compteur 7 bits qui boucle a 128)
+    // force une ecriture immediate, independamment du cumul normal.
+    bool rainTipOccurred = false;
 
     // règle 6 : les codes de trame ne sont testes qu'a un seul endroit dans
     // tout le projet, via les constantes ISS_TYPE_* de IssCommon.h (jamais
@@ -169,33 +200,103 @@ void DataLogger::logRecord(const IssData &data)
         case ISS_TYPE_SOLAR:    currentState.solarRadiation = data.solarRadiation; break;
         case ISS_TYPE_UV:       currentState.uvIndex = data.uvIndex; break;
         case ISS_TYPE_RAINRATE: currentState.rainRateMmPerHour = data.rainRateMmPerHour; break;
-        case ISS_TYPE_RAIN:     currentState.rainTipCount = data.rainTipCount; break;
         case ISS_TYPE_WINDGUST: currentState.windGustKph = data.windGustKph; break;
+        case ISS_TYPE_RAIN:
+        {
+            currentState.rainTipCount = data.rainTipCount;
+            if (rainTipBaselineSet == false)
+            {
+                // Premiere trame de pluie recue depuis le demarrage : le
+                // compteur peut deja etre non nul (cumul depuis la mise
+                // sous tension de l'ISS, pas depuis notre demarrage a
+                // nous) - on memorise juste la reference, sans declencher
+                // d'ecriture immediate a tort.
+                rainTipBaselineSet = true;
+                previousRainTipCount = data.rainTipCount;
+            }
+            else if (data.rainTipCount != previousRainTipCount)
+            {
+                rainTipOccurred = true;
+                previousRainTipCount = data.rainTipCount;
+            }
+            break;
+        }
         default: break;
     }
 
     uint32_t logWriteIntervalMs = params.getLogWriteIntervalMs();
-    bool writeDue = (logWriteIntervalMs == 0) || ((millis() - lastWriteMillis) >= logWriteIntervalMs);
+    bool intervalDue = (logWriteIntervalMs == 0) || ((millis() - lastWriteMillis) >= logWriteIntervalMs);
+    bool writeDue = intervalDue || rainTipOccurred || transmissionSlotRow;
     if (writeDue == false)
     {
         return;
     }
-    lastWriteMillis = millis();
-
-    writeLine();
-}
-
-void DataLogger::writeLine()
-{
-    char dateString[9];
-    char timeString[7];
-    bool timeValid = timeManager.now(dateString, timeString);
     if (timeValid == false)
     {
         Serial.println(F("[DataLogger] Erreur : horodatage indisponible, ligne ignoree"));
         return;
     }
+    lastWriteMillis = millis();
 
+    if (rainTipOccurred == true)
+    {
+        Serial.println(F("[DataLogger] Clic de pluie detecte : ecriture immediate"));
+        logEvent(F("Clic de pluie : ecriture immediate"));
+    }
+
+    writeLine(dateString, timeString, transmissionSlotRow);
+}
+
+// Verifie si le creneau de transmission (Config.h : TRANSMISSION_SLOT_MINUTES,
+// cale sur l'horloge murale, pas sur un simple compte a rebours) vient
+// d'etre franchi. Si oui, calcule le taux de reception (trames recues /
+// trames attendues, IssCommon.h : issSecondsPerPacket()) sur le creneau qui
+// vient de se refermer, remet le compteur a zero, et renvoie true (pour que
+// logRecord() force une ecriture SD - point de verification entre les deux
+// cadences). N'est jamais reinitialise par une ecriture forcee ailleurs
+// (clic de pluie) : seul le franchissement reel d'un creneau le remet a
+// zero.
+bool DataLogger::checkReceptionSlotBoundary(const char timeString[7], uint8_t stationId)
+{
+    uint8_t currentHour = (uint8_t)((timeString[0] - '0') * 10 + (timeString[1] - '0'));
+    uint8_t currentMinute = (uint8_t)((timeString[2] - '0') * 10 + (timeString[3] - '0'));
+    int16_t minuteOfDay = (int16_t)currentHour * 60 + (int16_t)currentMinute;
+    int16_t currentSlotIndex = minuteOfDay / TRANSMISSION_SLOT_MINUTES;
+
+    bool newSlot = (transmissionSlotInitialized == false) || (currentSlotIndex != lastTransmissionSlotIndex);
+    if (newSlot == false)
+    {
+        return false;
+    }
+
+    float expectedFrames = ((float)TRANSMISSION_SLOT_MINUTES * 60.0f) / issSecondsPerPacket(stationId);
+    float receptionPercentFloat = 0.0f;
+    if (expectedFrames > 0.0f)
+    {
+        receptionPercentFloat = 100.0f * (float)framesReceivedInSlot / expectedFrames;
+    }
+    if (receptionPercentFloat > 100.0f)
+    {
+        // Toujours plafonne a 100% (règle Davis : un depassement signifie
+        // simplement une legere avance sur l'estimation theorique, pas une
+        // reception "superieure a la normale").
+        receptionPercentFloat = 100.0f;
+    }
+    lastReceptionPercent = (uint8_t)(receptionPercentFloat + 0.5f);
+
+    Serial.print(F("[DataLogger] Taux de reception sur le creneau ecoule : "));
+    Serial.print(lastReceptionPercent);
+    Serial.println(F(" %"));
+
+    framesReceivedInSlot = 0;
+    lastTransmissionSlotIndex = currentSlotIndex;
+    transmissionSlotInitialized = true;
+
+    return true;
+}
+
+void DataLogger::writeLine(const char dateString[9], const char timeString[7], bool isTransmissionSlotRow)
+{
     sequenceNumber = sequenceNumber + 1;
 
     // Synthese du vent sur l'intervalle ecoule (voir DataLogger.h) :
@@ -249,15 +350,35 @@ void DataLogger::writeLine()
         snprintf(indoorPressureField, sizeof(indoorPressureField), "NA");
     }
 
-    char line[240];
-    snprintf(line, sizeof(line), "%lu,%s,%s,%u,%u,%.1f,%.1f,%u,%.1f,%.1f,%u,%u,%u,%s,%s,%s,%s",
+    // Taux de reception : affiche uniquement sur la ligne qui referme le
+    // creneau (isTransmissionSlotRow), "NA" sinon - c'est justement le
+    // role de la colonne creneauTransmission de le signaler sans ambiguite.
+    char receptionField[6];
+    if (isTransmissionSlotRow == true)
+    {
+        snprintf(receptionField, sizeof(receptionField), "%u", lastReceptionPercent);
+    }
+    else
+    {
+        snprintf(receptionField, sizeof(receptionField), "NA");
+    }
+
+    uint8_t transmissionSlotFlag = 0;
+    if (isTransmissionSlotRow == true)
+    {
+        transmissionSlotFlag = 1;
+    }
+
+    char line[260];
+    snprintf(line, sizeof(line), "%lu,%s,%s,%u,%u,%.1f,%.1f,%u,%.1f,%.1f,%u,%u,%u,%s,%s,%s,%s,%u,%s",
              sequenceNumber, dateString, timeString,
              currentState.stationId, currentState.batteryLow,
              currentState.temperatureOutside, currentState.humidityOutside,
              currentState.solarRadiation, currentState.uvIndex,
              currentState.rainRateMmPerHour, currentState.rainTipCount,
              currentState.windGustKph, windSpeedAverageKph, windDirectionField,
-             indoorTemperatureField, indoorHumidityField, indoorPressureField);
+             indoorTemperatureField, indoorHumidityField, indoorPressureField,
+             transmissionSlotFlag, receptionField);
 
 #if USE_SD_CARD
     if (logFile)

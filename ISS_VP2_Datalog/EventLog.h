@@ -25,3 +25,4 @@
 
 void logEventBegin();
 void logEvent(const __FlashStringHelper *message);
+void logEvent(const __FlashStringHelper *message, long value);

@@ -32,14 +32,9 @@ void logEventBegin()
 #endif
 }
 
-void logEvent(const __FlashStringHelper *message)
-{
 #if USE_SD_CARD
-    if (eventLogReady == false)
-    {
-        return;
-    }
-
+static void writeLogTimestamp()
+{
     char dateString[9];
     char timeString[7];
     bool timeValid = timeManager.now(dateString, timeString);
@@ -55,9 +50,40 @@ void logEvent(const __FlashStringHelper *message)
         eventLogFile.print(F("--------  ------"));
     }
     eventLogFile.print(F(" - "));
+}
+#endif
+
+void logEvent(const __FlashStringHelper *message)
+{
+#if USE_SD_CARD
+    if (eventLogReady == false)
+    {
+        return;
+    }
+
+    writeLogTimestamp();
     eventLogFile.println(message);
     eventLogFile.flush();
 #else
     (void)message;
+#endif
+}
+
+void logEvent(const __FlashStringHelper *message, long value)
+{
+#if USE_SD_CARD
+    if (eventLogReady == false)
+    {
+        return;
+    }
+
+    writeLogTimestamp();
+    eventLogFile.print(message);
+    eventLogFile.print(F(" : "));
+    eventLogFile.println(value);
+    eventLogFile.flush();
+#else
+    (void)message;
+    (void)value;
 #endif
 }

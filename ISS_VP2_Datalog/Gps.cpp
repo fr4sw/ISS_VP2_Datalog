@@ -75,7 +75,7 @@ static void gpsApplyFix(uint32_t fixUnixTime, uint8_t satelliteCount)
         Serial.print(F("[Gps] Ecart mesure avant resynchronisation : "));
         Serial.print(driftSeconds);
         Serial.println(F(" s"));
-        logEvent(F("Point GPS valide, horloge resynchronisee"));
+        logEvent(F("Point GPS valide, ecart RTC avant resynchronisation (s)"), driftSeconds);
     }
     else
     {
@@ -123,6 +123,36 @@ void gpsUpdate()
     {
         char receivedChar = (char)Serial2.read();
         gpsParser.encode(receivedChar);
+
+#if DEBUG_GPS
+        // Affiche la trame GGA complete (heure UTC + nombre de satellites,
+        // memes champs vides si pas encore de fix), en plus du resume
+        // ci-dessous. La date vient d'une trame separee (RMC), non affichee
+        // ici : ce bloc ne montre que la trame reellement utilisee pour
+        // l'heure et le nombre de satellites, comme demande.
+        static char ggaLineBuffer[90];
+        static uint8_t ggaLineLength = 0;
+
+        if ((receivedChar == '\r') || (receivedChar == '\n'))
+        {
+            if (ggaLineLength > 0)
+            {
+                ggaLineBuffer[ggaLineLength] = '\0';
+                bool isGgaSentence = (strstr(ggaLineBuffer, "GGA") != nullptr);
+                if (isGgaSentence == true)
+                {
+                    Serial.print(F("[Gps] Trame GGA : "));
+                    Serial.println(ggaLineBuffer);
+                }
+                ggaLineLength = 0;
+            }
+        }
+        else if (ggaLineLength < (sizeof(ggaLineBuffer) - 1))
+        {
+            ggaLineBuffer[ggaLineLength] = receivedChar;
+            ggaLineLength = ggaLineLength + 1;
+        }
+#endif
     }
 
     bool fixDateTimeValid = gpsParser.date.isValid() && gpsParser.time.isValid();

@@ -104,7 +104,7 @@ void BmeIndoor::update()
     Serial.print(F("[BmeIndoor] BME680 "));
     Serial.print(F(" - "));
     Serial.print(F("Temp Int : ")); Serial.print(lastData.temperatureIndoor, 1); Serial.print(F(" C  / "));
-    Serial.print(F("Hum Int : ")); Serial.print(lastData.humidityIndoor, 1); Serial.println(F(" %  /  "));
+    Serial.print(F("Hum Int : ")); Serial.print(lastData.humidityIndoor, 1); Serial.print(F(" %  /  "));
     Serial.print(F("Pression : ")); Serial.print(lastData.pressureIndoor, 1); Serial.println(F(" HPa"));
 #endif
 
