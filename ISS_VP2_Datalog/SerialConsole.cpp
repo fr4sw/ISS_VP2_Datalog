@@ -18,6 +18,7 @@ static void printHelp()
     Serial.println(F("  SET TZ <heures>       - fuseau horaire (ex : SET TZ 4 pour UTC+4)"));
     Serial.println(F("  SET LOGINTERVAL <ms>  - periode d'ecriture CSV (0 = a chaque trame)"));
     Serial.println(F("  SET GPSBAUD <bauds>   - debit UART du GPS (ex : SET GPSBAUD 9600)"));
+    Serial.println(F("  SET MESHBAUD <bauds>  - debit UART du lien Meshtastic (ex : SET MESHBAUD 38400)"));
     Serial.println(F("  SAVE                  - enregistre les parametres sur la carte SD"));
 }
 
@@ -28,7 +29,9 @@ static void printCurrentValues()
     Serial.print(F("  LOGINTERVAL="));
     Serial.print(params.getLogWriteIntervalMs());
     Serial.print(F("  GPSBAUD="));
-    Serial.println(params.getGpsBaudRate());
+    Serial.print(params.getGpsBaudRate());
+    Serial.print(F("  MESHBAUD="));
+    Serial.println(params.getMeshBaudRate());
 }
 
 // Traite une commande "SET <CLE> <VALEUR>" deja separee de son mot-clef
@@ -59,6 +62,11 @@ static void handleSetCommand(char arguments[])
     {
         params.setGpsBaudRate((uint32_t)value);
         Serial.println(F("[Console] GPSBAUD mis a jour (SAVE pour rendre le reglage permanent)"));
+    }
+    else if (strcmp(key, "MESHBAUD") == 0)
+    {
+        params.setMeshBaudRate((uint32_t)value);
+        Serial.println(F("[Console] MESHBAUD mis a jour (SAVE pour rendre le reglage permanent)"));
     }
     else
     {

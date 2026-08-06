@@ -38,6 +38,7 @@
 #define USE_WIFI_IHM   0
 #define USE_OTA        0
 #define USE_BME680     1         // capteur temp, Hum, pression interne (et gaz eventuellement)
+#define USE_MESHTASTIC 1         // liaison serie vers un appareil Meshtastic (T114), voir MeshLink.h
 
 // --- Constantes protocole ISS (Davis Vantage Pro2) ---
 #define ISS_FRAME_MAX_LENGTH        8   // longueur max, cas FSK avec CRC
@@ -83,12 +84,31 @@
 // demander de 5 a 15 minutes, pas quelques secondes.
 #define GPS_TIMEOUT                    900000UL   // ms (15 min), avant abandon d'une synchro GPS
 #define GPS_MINIMUM_SATELLITES         4
+// isValid() de TinyGPSPlus indique seulement qu'une valeur a deja ete
+// decodee au moins une fois depuis le demarrage, pas qu'elle est fraiche :
+// gpsParser est statique et n'est jamais reinitialise entre deux sessions
+// GPS (voir gpsBegin()). GPS_FIX_MAX_AGE_MS borne l'age (age(), en ms)
+// tolere pour un champ date/heure/satellites avant de le considerer
+// perime (ex : reste d'une session precedente).
+#define GPS_FIX_MAX_AGE_MS             2000UL
 // Frequence de resynchronisation, une fois qu'un premier point valide a
 // ete obtenu : le RTC (present en mode GPS_RTC) derive tres peu, une
 // resynchro quotidienne suffit ; sans RTC (GPS_ONLY, horloge logicielle
 // uniquement) on recale plus souvent pour limiter la derive de millis().
 #define GPS_RTC_RESYNC_INTERVAL_MS     86400000UL   // 24 h
 #define GPS_ONLY_RESYNC_INTERVAL_MS     14400000UL   // 4 h
+
+// --- Meshtastic (MeshLink.h/.cpp) ---
+// MESH_BAUD_DEFAULT : a VERIFIER sur le T114 reel (configuration du module
+// "Serial"/console de l'appareil) - 38400 est la seule valeur documentee
+// trouvee avec certitude (module "Serial", pas necessairement le meme
+// reglage que la console/API protobuf). Modifiable sans reprogrammer via
+// le parametre MESHBAUD (Params) une fois verifie.
+#define MESH_BAUD_DEFAULT           38400UL
+// Delai (bloquant, voir MeshLink.cpp) laisse au T114 pour cesser d'emettre
+// du texte de debug apres la poignee de main, avant de lui envoyer la
+// telemetrie.
+#define MESH_HANDSHAKE_SETTLE_MS    250UL
 
 // --- Creneau de "transmission" (règle Davis/WeeWx/Weatherlink) ---
 // Contrairement a l'ecriture SD (LOG_WRITE_INTERVAL_MS_DEFAULT, plus
@@ -97,9 +117,9 @@
 // demarrage : cela permet de PREDIRE l'instant de la prochaine
 // transmission, comme le fait WeeWx/Weatherlink. C'est aussi la base du
 // calcul du taux de reception (tauxReceptionPct, voir DataLogger.cpp).
-// Aucune transmission radio n'existe encore dans ce projet (Mesh a venir) :
-// ce creneau ne fait aujourd'hui que declencher le calcul du taux de
-// reception, en attendant.
+// MeshLink.h/.cpp existe (premier jet) mais n'est pas encore branche sur
+// ce creneau : voir DataLogger.h remarque 2 pour le point d'integration
+// prevu (colonne creneauTransmission).
 #define TRANSMISSION_SLOT_MINUTES   5
 
 // --- timeout écriture carte SD (pour ne pas écrire trop souvent) ---
@@ -119,10 +139,10 @@
 
 #define DEBUG              1   // 1 = affiche les acquisitions de données, 0 = production
 
-#define DEBUG_RAW_FRAMES   1   // 1 = affiche chaque trame brute recue en
+#define DEBUG_RAW_FRAMES   0   // 1 = affiche chaque trame brute recue en
                                 // hexadecimal avant decodage, 0 = production
 
-#define DEBUG_GPS          1   // 1 = affiche uniquement l'heure UTC et le
+#define DEBUG_GPS          0   // 1 = affiche uniquement l'heure UTC et le
                                 // nombre de satellites decodes par le GPS
                                 // (le flux NMEA complet est trop volumineux
                                 // pour DEBUG_RAW_FRAMES), 0 = production

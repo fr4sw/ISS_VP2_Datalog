@@ -166,7 +166,6 @@ void DataLogger::logRecord(const IssData &data)
     currentState.frameValid = true;
 
     accumulateWindSample(data.windSpeedKph, data.windDirectionDeg);
-    framesReceivedInSlot = framesReceivedInSlot + 1;
 
     // Heure courante lue UNE SEULE fois par trame : sert a la fois a
     // detecter le franchissement du creneau de transmission ci-dessous, et
@@ -179,11 +178,21 @@ void DataLogger::logRecord(const IssData &data)
     // Le creneau (Config.h : TRANSMISSION_SLOT_MINUTES) est verifie a
     // CHAQUE trame (pas seulement a l'ecriture), pour detecter son
     // franchissement au plus tot et forcer une ecriture au bon moment.
+    // IMPORTANT : cette verification doit avoir lieu AVANT d'incrementer
+    // framesReceivedInSlot pour la trame courante. Sinon, la trame qui
+    // fait justement franchir la frontiere du creneau serait comptee dans
+    // l'ANCIEN creneau (incrementee puis englobee dans le calcul du taux
+    // avant la remise a zero), qui lui revient a tort, au lieu d'etre
+    // creditee au nouveau creneau qu'elle vient de demarrer - d'ou un
+    // deficit systematique de 1 trame par creneau (taux bloque ~97-98%
+    // meme sur liaison filaire sans perte reelle).
     bool transmissionSlotRow = false;
     if (timeValid == true)
     {
         transmissionSlotRow = checkReceptionSlotBoundary(timeString, data.stationId);
     }
+
+    framesReceivedInSlot = framesReceivedInSlot + 1;
 
     // Un clic de pluie (changement du compteur, pas seulement une
     // augmentation - le compteur est un compteur 7 bits qui boucle a 128)

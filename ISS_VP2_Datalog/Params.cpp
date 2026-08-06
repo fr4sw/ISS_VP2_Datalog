@@ -76,6 +76,10 @@ static void applyParamLine(const char line[])
     {
         params.setGpsBaudRate((uint32_t)value);
     }
+    else if (strcmp(key, "MESHBAUD") == 0)
+    {
+        params.setMeshBaudRate((uint32_t)value);
+    }
     else
     {
         Serial.print(F("[Params] Avertissement : cle inconnue ignoree : "));
@@ -88,6 +92,7 @@ void Params::begin()
     timezoneOffsetHours = TIMEZONE_OFFSET_HOURS_DEFAULT;
     logWriteIntervalMs = LOG_WRITE_INTERVAL_MS_DEFAULT;
     gpsBaudRate = UART_GPS_BAUD;
+    meshBaudRate = MESH_BAUD_DEFAULT;
 
     load();
 
@@ -96,7 +101,9 @@ void Params::begin()
     Serial.print(F(" h, LOGINTERVAL = "));
     Serial.print(logWriteIntervalMs);
     Serial.print(F(" ms (0 = a chaque trame), GPSBAUD = "));
-    Serial.println(gpsBaudRate);
+    Serial.print(gpsBaudRate);
+    Serial.print(F(", MESHBAUD = "));
+    Serial.println(meshBaudRate);
 }
 
 void Params::load()
@@ -157,6 +164,8 @@ void Params::save()
     paramsFile.println(logWriteIntervalMs);
     paramsFile.print(F("GPSBAUD="));
     paramsFile.println(gpsBaudRate);
+    paramsFile.print(F("MESHBAUD="));
+    paramsFile.println(meshBaudRate);
     paramsFile.flush();
     paramsFile.close();
 
@@ -192,4 +201,14 @@ uint32_t Params::getGpsBaudRate() const
 void Params::setGpsBaudRate(uint32_t baudRate)
 {
     gpsBaudRate = baudRate;
+}
+
+uint32_t Params::getMeshBaudRate() const
+{
+    return meshBaudRate;
+}
+
+void Params::setMeshBaudRate(uint32_t baudRate)
+{
+    meshBaudRate = baudRate;
 }

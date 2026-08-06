@@ -25,6 +25,10 @@
 //             setLogWriteIntervalMs()
 //             getGpsBaudRate()            - debit UART du GPS (bauds).
 //             setGpsBaudRate()
+//             getMeshBaudRate()           - debit UART du lien Meshtastic
+//                                           (bauds), meme port physique que
+//                                           le GPS (voir SharedUart.h).
+//             setMeshBaudRate()
 // Format fichier PARAMS_FILE_NAME : une ligne par parametre, "CLE=VALEUR"
 //             (nombres entiers uniquement, pas d'espaces), lignes commencant
 //             par '#' ignorees (commentaires). Exemple :
@@ -32,6 +36,7 @@
 //                 TZ=4
 //                 LOGINTERVAL=30000
 //                 GPSBAUD=9600
+//                 MESHBAUD=38400
 // ============================================================================
 #pragma once
 #include <Arduino.h>
@@ -51,12 +56,16 @@ public:
     uint32_t getGpsBaudRate() const;
     void     setGpsBaudRate(uint32_t baudRate);
 
+    uint32_t getMeshBaudRate() const;
+    void     setMeshBaudRate(uint32_t baudRate);
+
 private:
     void load();
 
     int8_t   timezoneOffsetHours;
     uint32_t logWriteIntervalMs;
     uint32_t gpsBaudRate;
+    uint32_t meshBaudRate;
 };
 
 extern Params params;

@@ -16,6 +16,7 @@
 #include "Power.h"
 #include "EventLog.h"
 #include "Params.h"
+#include "SharedUart.h"
 #if TIME_MODE == TIME_MODE_GPS_RTC
     #include "Rtc.h"
 #endif
@@ -37,8 +38,18 @@ static uint32_t      gpsReferenceUnixTime;
 static unsigned long gpsReferenceMillis;
 #endif
 
-static void gpsStartAcquisition()
+static bool gpsTryStartAcquisition()
 {
+    bool busAcquired = sharedUartAcquire(SHARED_UART_GPS);
+    if (busAcquired == false)
+    {
+        // Bus partage (Serial2) actuellement utilise par Mesh : on ne
+        // force jamais - voir SharedUart.h. Nouvelle tentative au prochain
+        // appel de gpsUpdate() (quelques millisecondes), la fenetre
+        // d'indisponibilite du bus etant toujours tres courte.
+        return false;
+    }
+
     Serial2.begin(params.getGpsBaudRate());
     power.enableGps();
     power.disableMesh();   // GPS et Mesh partagent le meme UART (Serial2)
@@ -47,6 +58,7 @@ static void gpsStartAcquisition()
     gpsStateStartMillis = millis();
 
     Serial.println(F("[Gps] Acquisition demarree"));
+    return true;
 }
 
 // Applique un point GPS valide (ecart en secondes par rapport a l'ancienne
@@ -84,6 +96,7 @@ static void gpsApplyFix(uint32_t fixUnixTime, uint8_t satelliteCount)
 
     gpsEverSynced = true;
 
+    sharedUartRelease(SHARED_UART_GPS);
     power.disableGps();
     gpsState = GPS_STATE_WAITING;
     gpsStateStartMillis = millis();
@@ -92,7 +105,15 @@ static void gpsApplyFix(uint32_t fixUnixTime, uint8_t satelliteCount)
 bool gpsBegin()
 {
     gpsEverSynced = false;
-    gpsStartAcquisition();
+    bool started = gpsTryStartAcquisition();
+    if (started == false)
+    {
+        // Tres improbable au demarrage (Mesh pas encore actif), mais gere
+        // par coherence : on retente au tout prochain gpsUpdate() en
+        // laissant gpsStateStartMillis "tres ancien".
+        gpsState = GPS_STATE_WAITING;
+        gpsStateStartMillis = 0;
+    }
     return true;
 }
 
@@ -110,7 +131,11 @@ void gpsUpdate()
         if (resyncDue == true)
         {
             Serial.println(F("[Gps] Nouvelle tentative de resynchronisation"));
-            gpsStartAcquisition();
+            // gpsTryStartAcquisition() ne met gpsStateStartMillis a jour
+            // qu'en cas de succes : si le bus est occupe (Mesh), le
+            // prochain appel de gpsUpdate() retrouvera resyncDue a true et
+            // reessaiera aussitot, sans delai dedie a gerer ici.
+            gpsTryStartAcquisition();
         }
         return;
     }
@@ -155,9 +180,17 @@ void gpsUpdate()
 #endif
     }
 
-    bool fixDateTimeValid = gpsParser.date.isValid() && gpsParser.time.isValid();
+    // isValid() reste vrai indefiniment des qu'une valeur a ete decodee une
+    // fois (gpsParser est statique, jamais reinitialise entre deux sessions
+    // GPS) : sans verification de fraicheur via age() (ms depuis la
+    // derniere trame decodee avec succes pour ce champ), un champ peut
+    // rester "valide" alors qu'il date de la session precedente (ex : la
+    // veille), et etre ecrit a tort dans le RTC.
+    bool fixDateTimeValid = gpsParser.date.isValid() && gpsParser.time.isValid()
+                          && (gpsParser.date.age() <= GPS_FIX_MAX_AGE_MS)
+                          && (gpsParser.time.age() <= GPS_FIX_MAX_AGE_MS);
     uint8_t satelliteCount = 0;
-    if (gpsParser.satellites.isValid() == true)
+    if ((gpsParser.satellites.isValid() == true) && (gpsParser.satellites.age() <= GPS_FIX_MAX_AGE_MS))
     {
         satelliteCount = (uint8_t)gpsParser.satellites.value();
     }
@@ -214,6 +247,7 @@ void gpsUpdate()
         Serial.println(satelliteCount);
         logEvent(F("Erreur : timeout acquisition GPS"));
 
+        sharedUartRelease(SHARED_UART_GPS);
         power.disableGps();
         gpsState = GPS_STATE_WAITING;
         gpsStateStartMillis = millis();
