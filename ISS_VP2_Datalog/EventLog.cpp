@@ -7,6 +7,7 @@
 #include "Config.h"
 #include "HalPins.h"
 #include "TimeManager.h"
+#include "Params.h"
 
 static File eventLogFile;
 static bool eventLogReady = false;
@@ -37,7 +38,7 @@ static void writeLogTimestamp()
 {
     char dateString[9];
     char timeString[7];
-    bool timeValid = timeManager.now(dateString, timeString);
+    bool timeValid = timeManager.now(dateString, timeString, params.getDataloggerUtc());
 
     if (timeValid == true)
     {

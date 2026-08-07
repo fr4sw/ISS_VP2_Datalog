@@ -25,16 +25,16 @@
 TimeManager timeManager;
 
 #if (TIME_MODE == TIME_MODE_GPS_RTC) || (TIME_MODE == TIME_MODE_RTC_ONLY) || (TIME_MODE == TIME_MODE_GPS_ONLY)
-// Applique le fuseau horaire (heures entieres, Params) a un horodatage UTC
-// et le formate en "YYYYMMDD"/"HHMMSS". Chaque valeur est explicitement
+// Applique un decalage (heures locales, ou 0 pour l'UTC) a un horodatage
+// UTC et le formate en "YYYYMMDD"/"HHMMSS". Chaque valeur est explicitement
 // ramenee a la plage attendue par son format (%100 pour un champ 2
 // chiffres, %10000 pour un champ 4 chiffres) : sans cela, le compilateur
 // ne peut pas prouver que le resultat rentre dans un tampon de taille
 // exacte (avertissement -Wformat-truncation), meme si annee/mois/jour/
 // heure/minute/seconde sont en pratique toujours dans une plage valide.
-static void formatLocalDateTime(uint32_t utcUnixTime, char dateString[9], char timeString[7])
+static void formatDateTime(uint32_t utcUnixTime, bool useUtc, char dateString[9], char timeString[7])
 {
-    int32_t  offsetSeconds = (int32_t)params.getTimezoneOffsetHours() * 3600L;
+    int32_t  offsetSeconds = useUtc ? 0 : ((int32_t)params.getTimezoneOffsetHours() * 3600L);
     uint32_t localUnixTime = (uint32_t)((int64_t)utcUnixTime + (int64_t)offsetSeconds);
     DateTime localDateTime(localUnixTime);
 
@@ -94,7 +94,7 @@ void TimeManager::update()
 #endif
 }
 
-bool TimeManager::now(char dateString[9], char timeString[7])
+bool TimeManager::now(char dateString[9], char timeString[7], bool useUtc)
 {
 #if (TIME_MODE == TIME_MODE_GPS_RTC) || (TIME_MODE == TIME_MODE_RTC_ONLY)
     // Le RTC est l'unique source lue ici : en mode GPS_RTC, c'est le GPS
@@ -116,7 +116,7 @@ bool TimeManager::now(char dateString[9], char timeString[7])
         Serial.println(F("[TimeManager] Erreur : lecture RTC impossible"));
         return false;
     }
-    formatLocalDateTime(utcUnixTime, dateString, timeString);
+    formatDateTime(utcUnixTime, useUtc, dateString, timeString);
     return true;
 
 #elif TIME_MODE == TIME_MODE_GPS_ONLY
@@ -129,10 +129,12 @@ bool TimeManager::now(char dateString[9], char timeString[7])
         Serial.println(F("[TimeManager] Erreur : aucun point GPS disponible pour l'instant"));
         return false;
     }
-    formatLocalDateTime(utcUnixTime, dateString, timeString);
+    formatDateTime(utcUnixTime, useUtc, dateString, timeString);
     return true;
 
 #elif TIME_MODE == TIME_MODE_MANUAL
+    // Mode manuel : pas de source UTC reelle (horodatage fige initialise
+    // dans Config.h), useUtc n'a donc aucun effet ici.
     unsigned long elapsedSeconds = (millis() - manualStartMillis) / 1000;
     unsigned long totalSeconds = MANUAL_TIME_HOUR * 3600UL + MANUAL_TIME_MINUTE * 60UL + MANUAL_TIME_SECOND + elapsedSeconds;
     unsigned long currentDay = MANUAL_TIME_DAY + (totalSeconds / 86400UL);
@@ -145,5 +147,40 @@ bool TimeManager::now(char dateString[9], char timeString[7])
     snprintf(dateString, 9, "%04d%02d%02lu", MANUAL_TIME_YEAR, MANUAL_TIME_MONTH, currentDay % 100);
     snprintf(timeString, 7, "%02lu%02lu%02lu", currentHour % 100, currentMinute % 100, currentSecond % 100);
     return true;
+#endif
+}
+
+// Seul point d'acces a la position GPS pour le reste du programme (règle
+// 102) : Gps.h n'est inclus ici que si TIME_MODE en depend deja pour
+// l'heure (voir les #include en tete de fichier) - hors GPS_RTC/GPS_ONLY,
+// il n'y a simplement jamais de position disponible.
+bool TimeManager::location(float &latitudeDeg, float &longitudeDeg, uint8_t &satelliteCount)
+{
+#if (TIME_MODE == TIME_MODE_GPS_RTC) || (TIME_MODE == TIME_MODE_GPS_ONLY)
+    return gpsLastLocation(latitudeDeg, longitudeDeg, satelliteCount);
+#else
+    return false;
+#endif
+}
+
+// Epoque Unix UTC brute (voir TimeManager.h) : contrairement a now(), pas
+// de mise en forme locale/UTC - directement ce que renvoie la source RTC/
+// GPS, sans passer par formatDateTime(). TIME_MODE_MANUAL n'a pas de
+// notion d'UTC reelle (horodatage fige arbitraire, voir Config.h) : renvoie
+// systematiquement false, l'appelant (MeshLink) doit s'en accommoder.
+bool TimeManager::nowUtcUnix(uint32_t &utcUnixTime)
+{
+#if (TIME_MODE == TIME_MODE_GPS_RTC) || (TIME_MODE == TIME_MODE_RTC_ONLY)
+    if (rtcValid == false)
+    {
+        return false;
+    }
+    return rtcNow(utcUnixTime);
+
+#elif TIME_MODE == TIME_MODE_GPS_ONLY
+    return gpsNow(utcUnixTime);
+
+#else
+    return false;
 #endif
 }

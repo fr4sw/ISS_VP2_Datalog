@@ -3,6 +3,7 @@
 // ============================================================================
 #include <Arduino.h>
 #include <SPI.h>
+#include <math.h>
 #include "DataLogger.h"
 #include "BoardConfig.h"
 #include "Config.h"
@@ -10,6 +11,10 @@
 #include "HalPins.h"
 #include "Params.h"
 #include "EventLog.h"
+#include "LocationLog.h"
+#if USE_MESHTASTIC
+#include "MeshLink.h"
+#endif
 
 DataLogger dataLogger;
 
@@ -17,7 +22,7 @@ static void sdDateTimeCallback(uint16_t *fatDate, uint16_t *fatTime)
 {
     char dateString[9];
     char timeString[7];
-    bool timeValid = timeManager.now(dateString, timeString);
+    bool timeValid = timeManager.now(dateString, timeString, false);   // horodatage FAT toujours local (convention systeme de fichiers), independant de DATALOGGERUTC
 
     if (timeValid == false)
     {
@@ -53,11 +58,34 @@ void DataLogger::begin()
 
     rainTipBaselineSet = false;
     previousRainTipCount = 0;
+    rainEpisodeActive = false;
+    lastRainTipMillis = 0;
+    rainEpisodeCumulativeMm = 0.0f;
+    rainEpisodeStartDate[0] = '\0';
+    rainEpisodeStartTime[0] = '\0';
+    lastRainEventValid = false;
+    lastRainEventDate[0] = '\0';
+    lastRainEventTime[0] = '\0';
+    lastRainEventCumulativeMm = 0.0f;
+    lastMeasurementDate[0] = '\0';
+    lastMeasurementTime[0] = '\0';
+    lastWindSpeedKph = 0;
+    lastWindDirectionDeg = -1;
+    lastLocationValid = false;
+    lastLocationLatitudeDeg = 0.0f;
+    lastLocationLongitudeDeg = 0.0f;
 
     transmissionSlotInitialized = false;
     lastTransmissionSlotIndex = -1;
     framesReceivedInSlot = 0;
     lastReceptionPercent = 0;
+#if USE_MESHTASTIC
+    meshSendPending = false;
+    meshSendDueMillis = 0;
+#endif
+#if DEBUG
+    framesReceivedSinceLastWrite = 0;
+#endif
 
 #if USE_SD_CARD
     bool sdReady = beginSdCard();
@@ -75,7 +103,7 @@ void DataLogger::begin()
     char dateString[9];
     char timeString[7];
     char logFileName[13];
-    bool timeValid = timeManager.now(dateString, timeString);
+    bool timeValid = timeManager.now(dateString, timeString, params.getDataloggerUtc());
 
     if (timeValid == true)
     {
@@ -102,7 +130,11 @@ void DataLogger::begin()
     Serial.println(logFileName);
     logEvent(F("Nouveau fichier de log CSV cree"));
 
+#if DEBUG
+    logFile.println(F("seq,date,heure,stationId,batterieFaible,temperatureC,humidite,rayonnementSolaire,indexUV,pluieMmH,compteurPluie,rafaleKph,vitesseVentKph,directionVent,temperatureInterieureC,humiditeInterieure,pressionInterieureHpa,creneauTransmission,tauxReceptionPct,framesRecuesDepuisEcriture,framesRecuesCreneauEnCours"));
+#else
     logFile.println(F("seq,date,heure,stationId,batterieFaible,temperatureC,humidite,rayonnementSolaire,indexUV,pluieMmH,compteurPluie,rafaleKph,vitesseVentKph,directionVent,temperatureInterieureC,humiditeInterieure,pressionInterieureHpa,creneauTransmission,tauxReceptionPct"));
+#endif
     logFile.flush();
 #endif
 }
@@ -129,6 +161,25 @@ void DataLogger::printDecodedValue(const IssData &data)
 void DataLogger::updateIndoorData(const IndoorData &data)
 {
     currentIndoorState = data;
+}
+
+void DataLogger::getSnapshot(Snapshot &snapshot) const
+{
+    snapshot.temperatureOutsideC = currentState.temperatureOutside;
+    snapshot.humidityOutsidePercent = currentState.humidityOutside;
+    snapshot.windSpeedKph = lastWindSpeedKph;
+    snapshot.windDirectionDeg = lastWindDirectionDeg;
+    snapshot.windGustKph = currentState.windGustKph;
+    strncpy(snapshot.lastMeasurementDate, lastMeasurementDate, sizeof(snapshot.lastMeasurementDate));
+    strncpy(snapshot.lastMeasurementTime, lastMeasurementTime, sizeof(snapshot.lastMeasurementTime));
+    snapshot.rainActive = rainEpisodeActive;
+    snapshot.lastRainEventValid = lastRainEventValid;
+    strncpy(snapshot.lastRainEventDate, lastRainEventDate, sizeof(snapshot.lastRainEventDate));
+    strncpy(snapshot.lastRainEventTime, lastRainEventTime, sizeof(snapshot.lastRainEventTime));
+    snapshot.lastRainEventCumulativeMm = lastRainEventCumulativeMm;
+    snapshot.locationValid = lastLocationValid;
+    snapshot.latitudeDeg = lastLocationLatitudeDeg;
+    snapshot.longitudeDeg = lastLocationLongitudeDeg;
 }
 
 // Accumule un echantillon de vitesse/direction (appele a CHAQUE trame,
@@ -173,7 +224,7 @@ void DataLogger::logRecord(const IssData &data)
     // deux fois le RTC/GPS pour la meme trame).
     char dateString[9];
     char timeString[7];
-    bool timeValid = timeManager.now(dateString, timeString);
+    bool timeValid = timeManager.now(dateString, timeString, params.getDataloggerUtc());
 
     // Le creneau (Config.h : TRANSMISSION_SLOT_MINUTES) est verifie a
     // CHAQUE trame (pas seulement a l'ecriture), pour detecter son
@@ -193,11 +244,15 @@ void DataLogger::logRecord(const IssData &data)
     }
 
     framesReceivedInSlot = framesReceivedInSlot + 1;
+#if DEBUG
+    framesReceivedSinceLastWrite = framesReceivedSinceLastWrite + 1;
+#endif
 
     // Un clic de pluie (changement du compteur, pas seulement une
     // augmentation - le compteur est un compteur 7 bits qui boucle a 128)
     // force une ecriture immediate, independamment du cumul normal.
     bool rainTipOccurred = false;
+    bool rainEpisodeJustStarted = false;
 
     // règle 6 : les codes de trame ne sont testes qu'a un seul endroit dans
     // tout le projet, via les constantes ISS_TYPE_* de IssCommon.h (jamais
@@ -226,7 +281,32 @@ void DataLogger::logRecord(const IssData &data)
             else if (data.rainTipCount != previousRainTipCount)
             {
                 rainTipOccurred = true;
+
+                // Delta tolerant au bouclage du compteur 7 bits (0-127,
+                // voir IssCommon.cpp : RAIN_TIP_COUNT_MASK) : couvre a la
+                // fois le cas normal (delta petit) et un saut de plusieurs
+                // clics rate entre deux trames (aucune trame RAIN perdue
+                // n'est traitee differemment d'un clic simple).
+                uint16_t tipDelta = (uint16_t)(((int16_t)data.rainTipCount - (int16_t)previousRainTipCount + 128) % 128);
                 previousRainTipCount = data.rainTipCount;
+
+                if (rainEpisodeActive == false)
+                {
+                    // Voir DataLogger.h : un message n'est journalise qu'au
+                    // DEBUT d'un episode, pas a chaque clic individuel.
+                    rainEpisodeActive = true;
+                    rainEpisodeJustStarted = true;
+                    rainEpisodeCumulativeMm = 0.0f;
+                    strncpy(rainEpisodeStartDate, dateString, sizeof(rainEpisodeStartDate));
+                    strncpy(rainEpisodeStartTime, timeString, sizeof(rainEpisodeStartTime));
+                }
+                rainEpisodeCumulativeMm = rainEpisodeCumulativeMm + ((float)tipDelta * RAIN_MM_PER_TIP);
+                lastRainTipMillis = millis();
+
+                lastRainEventValid = true;
+                strncpy(lastRainEventDate, dateString, sizeof(lastRainEventDate));
+                strncpy(lastRainEventTime, timeString, sizeof(lastRainEventTime));
+                lastRainEventCumulativeMm = rainEpisodeCumulativeMm;
             }
             break;
         }
@@ -247,13 +327,13 @@ void DataLogger::logRecord(const IssData &data)
     }
     lastWriteMillis = millis();
 
-    if (rainTipOccurred == true)
+    if (rainEpisodeJustStarted == true)
     {
-        Serial.println(F("[DataLogger] Clic de pluie detecte : ecriture immediate"));
-        logEvent(F("Clic de pluie : ecriture immediate"));
+        Serial.println(F("[DataLogger] Debut d'un episode de pluie"));
+        logEvent(F("Debut episode de pluie"));
     }
 
-    writeLine(dateString, timeString, transmissionSlotRow);
+    writeLine(dateString, timeString, transmissionSlotRow, transmissionSlotRow || rainTipOccurred);
 }
 
 // Verifie si le creneau de transmission (Config.h : TRANSMISSION_SLOT_MINUTES,
@@ -304,7 +384,7 @@ bool DataLogger::checkReceptionSlotBoundary(const char timeString[7], uint8_t st
     return true;
 }
 
-void DataLogger::writeLine(const char dateString[9], const char timeString[7], bool isTransmissionSlotRow)
+void DataLogger::writeLine(const char dateString[9], const char timeString[7], bool isTransmissionSlotRow, bool forceFlush)
 {
     sequenceNumber = sequenceNumber + 1;
 
@@ -319,6 +399,7 @@ void DataLogger::writeLine(const char dateString[9], const char timeString[7], b
     }
 
     char windDirectionField[8];
+    int16_t windDirectionDegForSnapshot = -1;
     if (windDirectionSampleCount == 0)
     {
         snprintf(windDirectionField, sizeof(windDirectionField), "NA");
@@ -337,7 +418,14 @@ void DataLogger::writeLine(const char dateString[9], const char timeString[7], b
         }
         uint16_t majorityDirectionDeg = windDirectionDegFromSector(majoritySector);
         snprintf(windDirectionField, sizeof(windDirectionField), "%u", majorityDirectionDeg);
+        windDirectionDegForSnapshot = (int16_t)majorityDirectionDeg;
     }
+
+    // Voir DataLogger.h : photo de la derniere synthese, pour BleLink.
+    strncpy(lastMeasurementDate, dateString, sizeof(lastMeasurementDate));
+    strncpy(lastMeasurementTime, timeString, sizeof(lastMeasurementTime));
+    lastWindSpeedKph = windSpeedAverageKph;
+    lastWindDirectionDeg = windDirectionDegForSnapshot;
 
     // Champs du capteur interieur formates a part : affiche "NA" tant
     // qu'aucune mesure valide n'a ete recue depuis le demarrage (règle 6 -
@@ -378,7 +466,38 @@ void DataLogger::writeLine(const char dateString[9], const char timeString[7], b
         transmissionSlotFlag = 1;
     }
 
-    char line[260];
+    // Position GPS : journalisee separement (LocationLog.h), PAS dans le
+    // CSV temps reel - voir Config.h : LOCATION_FILE_NAME. locationLogRecord()
+    // se charge lui-meme de ne rien ecrire si la position n'a pas change
+    // depuis la derniere ligne (station fixe : ca ne devrait arriver
+    // qu'apres chaque resynchronisation GPS reussie, soit environ 1x/jour).
+    float latitudeDeg = 0.0f;
+    float longitudeDeg = 0.0f;
+    uint8_t locationSatelliteCount = 0;
+    bool locationAvailable = timeManager.location(latitudeDeg, longitudeDeg, locationSatelliteCount);
+    if (locationAvailable == true)
+    {
+        locationLogRecord(dateString, timeString, latitudeDeg, longitudeDeg, locationSatelliteCount);
+        lastLocationValid = true;
+        lastLocationLatitudeDeg = latitudeDeg;
+        lastLocationLongitudeDeg = longitudeDeg;
+    }
+
+    char line[300];
+#if DEBUG
+    // Voir Remarque 4, DataLogger.h : uniquement pour verification du
+    // comptage de reception, jamais en production.
+    snprintf(line, sizeof(line), "%lu,%s,%s,%u,%u,%.1f,%.1f,%u,%.1f,%.1f,%u,%u,%u,%s,%s,%s,%s,%u,%s,%u,%u",
+             sequenceNumber, dateString, timeString,
+             currentState.stationId, currentState.batteryLow,
+             currentState.temperatureOutside, currentState.humidityOutside,
+             currentState.solarRadiation, currentState.uvIndex,
+             currentState.rainRateMmPerHour, currentState.rainTipCount,
+             currentState.windGustKph, windSpeedAverageKph, windDirectionField,
+             indoorTemperatureField, indoorHumidityField, indoorPressureField,
+             transmissionSlotFlag, receptionField,
+             framesReceivedSinceLastWrite, framesReceivedInSlot);
+#else
     snprintf(line, sizeof(line), "%lu,%s,%s,%u,%u,%.1f,%.1f,%u,%.1f,%.1f,%u,%u,%u,%s,%s,%s,%s,%u,%s",
              sequenceNumber, dateString, timeString,
              currentState.stationId, currentState.batteryLow,
@@ -388,16 +507,62 @@ void DataLogger::writeLine(const char dateString[9], const char timeString[7], b
              currentState.windGustKph, windSpeedAverageKph, windDirectionField,
              indoorTemperatureField, indoorHumidityField, indoorPressureField,
              transmissionSlotFlag, receptionField);
+#endif
 
 #if USE_SD_CARD
     if (logFile)
     {
         logFile.println(line);
-        logFile.flush();
+        // flush() est une ecriture SD BLOQUANTE (potentiellement plusieurs
+        // dizaines de ms selon la carte). L'appeler sur CHAQUE ligne (y
+        // compris les ecritures de routine toutes les 30s) est un candidat
+        // serieux pour expliquer un taux de reception legerement mais
+        // systematiquement sous 100% meme sur liaison filaire propre : un
+        // blocage de quelques dizaines de ms peut suffire a deborder le
+        // tampon UART du RS485 (voir IssRs485.cpp) et perdre un octet en
+        // plein milieu d'une trame en cours de reception. On ne force le
+        // flush() immediat que sur les evenements qui en ont reellement
+        // besoin (creneau de 5 min, clic de pluie) - les ecritures de
+        // routine restent en cache OS/carte et sont de toute facon
+        // physiquement ecrites au plus tard au flush() suivant. A VALIDER
+        // sur le terrain : comparer le taux de reception avant/apres ce
+        // changement.
+        if (forceFlush == true)
+        {
+            logFile.flush();
+        }
     }
 #endif
 
     Serial.println(line);
+
+#if DEBUG
+    framesReceivedSinceLastWrite = 0;
+#endif
+
+#if USE_MESHTASTIC
+    if (isTransmissionSlotRow == true)
+    {
+        // Voir DataLogger.h : figer maintenant les valeurs a envoyer (le
+        // creneau qui vient de se refermer), armer l'echeance non
+        // bloquante verifiee dans update(). Pression : capteur interieur
+        // (l'ISS Davis n'a pas de barometre), rafale : derniere valeur
+        // connue (pas de synthese sur l'intervalle, contrairement a la
+        // vitesse moyenne). Pluie : cumul de l'episode en cours utilise
+        // comme approximation de "pluie sur la derniere heure" - PAS un
+        // vrai cumul glissant 1h (non implemente), acceptable tant qu'un
+        // episode ne s'etale pas sur plusieurs heures (a surveiller).
+        meshSendPending = true;
+        meshSendDueMillis = millis() + MESH_SEND_SETTLE_MS;
+        meshSendTemperatureC = currentState.temperatureOutside;
+        meshSendHumidityPercent = currentState.humidityOutside;
+        meshSendPressureHpa = (currentIndoorState.dataValid == true) ? currentIndoorState.pressureIndoor : 0.0f;
+        meshSendWindDirectionDeg = (windDirectionDegForSnapshot < 0) ? 0 : (uint16_t)windDirectionDegForSnapshot;
+        meshSendWindSpeedKph = (float)windSpeedAverageKph;
+        meshSendWindGustKph = (float)currentState.windGustKph;
+        meshSendRainfallMm = (rainEpisodeActive == true) ? rainEpisodeCumulativeMm : 0.0f;
+    }
+#endif
 
     resetWindAccumulators();
 }
@@ -415,5 +580,50 @@ void DataLogger::resetWindAccumulators()
 
 void DataLogger::update()
 {
-    // Reserve pour operations periodiques futures.
+    checkRainEpisodeTimeout();
+
+#if USE_MESHTASTIC
+    if ((meshSendPending == true) && (millis() >= meshSendDueMillis))
+    {
+        meshSendPending = false;
+
+        uint32_t utcUnixTime = 0;
+        bool utcAvailable = timeManager.nowUtcUnix(utcUnixTime);
+        if (utcAvailable == false)
+        {
+            Serial.println(F("[DataLogger] Envoi Mesh annule : pas de source UTC disponible (voir TimeManager)"));
+        }
+        else
+        {
+            Serial.println(F("[DataLogger] Envoi de la telemetrie Mesh du creneau qui vient de se refermer"));
+            meshLinkSendEnvironmentTelemetry(utcUnixTime,
+                                              meshSendTemperatureC, meshSendHumidityPercent, meshSendPressureHpa,
+                                              meshSendWindDirectionDeg, meshSendWindSpeedKph, meshSendWindGustKph,
+                                              meshSendRainfallMm);
+        }
+    }
+#endif
+}
+
+// Cloture un episode de pluie apres RAIN_EPISODE_TIMEOUT_MS sans nouveau
+// clic (Config.h). Doit etre appelee reguilerement (voir loop()) car,
+// contrairement au debut d'un episode, sa fin n'est PAS declenchee par une
+// trame ISS - il faut bien la detecter "en l'absence" d'evenement.
+void DataLogger::checkRainEpisodeTimeout()
+{
+    if (rainEpisodeActive == false)
+    {
+        return;
+    }
+    if ((millis() - lastRainTipMillis) < RAIN_EPISODE_TIMEOUT_MS)
+    {
+        return;
+    }
+
+    long tenthsOfMm = lroundf(rainEpisodeCumulativeMm * 10.0f);
+    Serial.print(F("[DataLogger] Fin d'episode de pluie, cumul (dixiemes de mm) : "));
+    Serial.println(tenthsOfMm);
+    logEvent(F("Fin episode de pluie (cumul, dixiemes de mm)"), tenthsOfMm);
+
+    rainEpisodeActive = false;
 }

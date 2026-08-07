@@ -19,6 +19,9 @@ static void printHelp()
     Serial.println(F("  SET LOGINTERVAL <ms>  - periode d'ecriture CSV (0 = a chaque trame)"));
     Serial.println(F("  SET GPSBAUD <bauds>   - debit UART du GPS (ex : SET GPSBAUD 9600)"));
     Serial.println(F("  SET MESHBAUD <bauds>  - debit UART du lien Meshtastic (ex : SET MESHBAUD 38400)"));
+    Serial.println(F("  SET GPSMINSAT <n>     - satellites min. pour accepter un point GPS (4 ~50m, 8 ~5m)"));
+    Serial.println(F("  SET DATALOGGERUTC <0|1> - 1 = horodatage CSV/EVENTS.LOG en UTC, 0 = heure locale"));
+    Serial.println(F("  SET MESHUTC <0|1>     - 1 = horodatage transmis sur le mesh en UTC, 0 = heure locale"));
     Serial.println(F("  SAVE                  - enregistre les parametres sur la carte SD"));
 }
 
@@ -31,7 +34,13 @@ static void printCurrentValues()
     Serial.print(F("  GPSBAUD="));
     Serial.print(params.getGpsBaudRate());
     Serial.print(F("  MESHBAUD="));
-    Serial.println(params.getMeshBaudRate());
+    Serial.print(params.getMeshBaudRate());
+    Serial.print(F("  GPSMINSAT="));
+    Serial.print(params.getGpsMinSatellites());
+    Serial.print(F("  DATALOGGERUTC="));
+    Serial.print(params.getDataloggerUtc());
+    Serial.print(F("  MESHUTC="));
+    Serial.println(params.getMeshUtc());
 }
 
 // Traite une commande "SET <CLE> <VALEUR>" deja separee de son mot-clef
@@ -67,6 +76,21 @@ static void handleSetCommand(char arguments[])
     {
         params.setMeshBaudRate((uint32_t)value);
         Serial.println(F("[Console] MESHBAUD mis a jour (SAVE pour rendre le reglage permanent)"));
+    }
+    else if (strcmp(key, "GPSMINSAT") == 0)
+    {
+        params.setGpsMinSatellites((uint8_t)value);
+        Serial.println(F("[Console] GPSMINSAT mis a jour (SAVE pour rendre le reglage permanent)"));
+    }
+    else if (strcmp(key, "DATALOGGERUTC") == 0)
+    {
+        params.setDataloggerUtc(value != 0);
+        Serial.println(F("[Console] DATALOGGERUTC mis a jour (SAVE pour rendre le reglage permanent)"));
+    }
+    else if (strcmp(key, "MESHUTC") == 0)
+    {
+        params.setMeshUtc(value != 0);
+        Serial.println(F("[Console] MESHUTC mis a jour (SAVE pour rendre le reglage permanent)"));
     }
     else
     {

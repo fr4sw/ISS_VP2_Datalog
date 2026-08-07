@@ -32,6 +32,33 @@ static const uint8_t MESHTASTIC_FRAME_START2 = 0xC3;
 // le protocole.
 static const uint32_t MESH_WANT_CONFIG_NONCE = 1;
 
+#if DEBUG_MESH
+// Affiche un tampon d'octets en hexadecimal sur le moniteur serie, prefixe
+// par sa direction (TX/RX) - c'est la seule chose exploitable a l'oeil pour
+// une trame protobuf binaire (pas de decodage ici, juste la preuve que
+// quelque chose part/arrive et sa taille). Reste dans MeshLink.cpp (pas de
+// fichier dedie) : usage strictement local a ce module, pas de règle 20
+// enfreinte (une seule tache - "journaliser une trame Mesh").
+static void debugPrintFrame(const char direction[], const uint8_t *frameBytes, size_t length)
+{
+    Serial.print(F("[MeshLink][DEBUG_MESH] "));
+    Serial.print(direction);
+    Serial.print(F(" ("));
+    Serial.print(length);
+    Serial.print(F(" octets) : "));
+    for (size_t byteIndex = 0; byteIndex < length; byteIndex++)
+    {
+        if (frameBytes[byteIndex] < 0x10)
+        {
+            Serial.print(F("0"));
+        }
+        Serial.print(frameBytes[byteIndex], HEX);
+        Serial.print(F(" "));
+    }
+    Serial.println();
+}
+#endif
+
 static void sendFramedToRadio(const uint8_t *toRadioBytes, size_t length)
 {
     Serial2.write(MESHTASTIC_FRAME_START1);
@@ -39,6 +66,10 @@ static void sendFramedToRadio(const uint8_t *toRadioBytes, size_t length)
     Serial2.write((uint8_t)((length >> 8) & 0xFF));
     Serial2.write((uint8_t)(length & 0xFF));
     Serial2.write(toRadioBytes, length);
+
+#if DEBUG_MESH
+    debugPrintFrame("TX", toRadioBytes, length);
+#endif
 }
 
 // Envoie la "poignee de main" et vide ce que renvoie le T114 pendant
@@ -59,13 +90,32 @@ static void performHandshake()
     }
 
     unsigned long handshakeStartMillis = millis();
+#if DEBUG_MESH
+    uint8_t rxBuffer[64];
+    size_t  rxLength = 0;
+#endif
     while ((millis() - handshakeStartMillis) < MESH_HANDSHAKE_SETTLE_MS)
     {
         while (Serial2.available() > 0)
         {
-            Serial2.read();   // vidange volontaire, non interpretee (voir MeshLink.h)
+            uint8_t receivedByte = (uint8_t)Serial2.read();   // vidange volontaire, non interpretee (voir MeshLink.h)
+#if DEBUG_MESH
+            if (rxLength < sizeof(rxBuffer))
+            {
+                rxBuffer[rxLength] = receivedByte;
+                rxLength = rxLength + 1;
+            }
+#else
+            (void)receivedByte;
+#endif
         }
     }
+#if DEBUG_MESH
+    if (rxLength > 0)
+    {
+        debugPrintFrame("RX (handshake, non interprete)", rxBuffer, rxLength);
+    }
+#endif
 }
 
 bool meshLinkSendEnvironmentTelemetry(uint32_t utcUnixTime,

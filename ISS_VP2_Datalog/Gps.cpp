@@ -24,6 +24,12 @@
 static TinyGPSPlus gpsParser;
 static bool        gpsEverSynced = false;
 
+// Derniere position obtenue (voir gpsLastLocation() / gpsApplyFix()).
+static bool  gpsLastLocationValid = false;
+static float gpsLastLatitudeDeg = 0.0f;
+static float gpsLastLongitudeDeg = 0.0f;
+static uint8_t gpsLastLocationSatelliteCount = 0;
+
 enum GpsState
 {
     GPS_STATE_ACQUIRING,   // GPS alimente, en attente d'un point valide
@@ -97,6 +103,7 @@ static void gpsApplyFix(uint32_t fixUnixTime, uint8_t satelliteCount)
     gpsEverSynced = true;
 
     sharedUartRelease(SHARED_UART_GPS);
+    Serial2.end();
     power.disableGps();
     gpsState = GPS_STATE_WAITING;
     gpsStateStartMillis = millis();
@@ -231,8 +238,24 @@ void gpsUpdate()
     }
 #endif
 
-    if ((fixDateTimeValid == true) && (satelliteCount >= GPS_MINIMUM_SATELLITES))
+    if ((fixDateTimeValid == true) && (satelliteCount >= params.getGpsMinSatellites()))
     {
+        // Position (latitude/longitude) capturee en meme temps que le point
+        // date/heure, avec la meme exigence de fraicheur (age()) que
+        // fixDateTimeValid ci-dessus - meme raison : location est aussi un
+        // champ de gpsParser, statique et jamais reinitialise entre deux
+        // sessions GPS. Independant de fixDateTimeValid (une position peut
+        // echouer alors que la date/heure a deja ete validee) : on ne bloque
+        // pas la resynchronisation RTC pour autant, on se contente de ne pas
+        // mettre a jour la position dans ce cas.
+        if ((gpsParser.location.isValid() == true) && (gpsParser.location.age() <= GPS_FIX_MAX_AGE_MS))
+        {
+            gpsLastLatitudeDeg = (float)gpsParser.location.lat();
+            gpsLastLongitudeDeg = (float)gpsParser.location.lng();
+            gpsLastLocationSatelliteCount = satelliteCount;
+            gpsLastLocationValid = true;
+        }
+
         DateTime fixDateTime(gpsParser.date.year(), gpsParser.date.month(), gpsParser.date.day(),
                               gpsParser.time.hour(), gpsParser.time.minute(), gpsParser.time.second());
         gpsApplyFix(fixDateTime.unixtime(), satelliteCount);
@@ -252,6 +275,18 @@ void gpsUpdate()
         gpsState = GPS_STATE_WAITING;
         gpsStateStartMillis = millis();
     }
+}
+
+bool gpsLastLocation(float &latitudeDeg, float &longitudeDeg, uint8_t &satelliteCount)
+{
+    if (gpsLastLocationValid == false)
+    {
+        return false;
+    }
+    latitudeDeg = gpsLastLatitudeDeg;
+    longitudeDeg = gpsLastLongitudeDeg;
+    satelliteCount = gpsLastLocationSatelliteCount;
+    return true;
 }
 
 #if TIME_MODE == TIME_MODE_GPS_ONLY

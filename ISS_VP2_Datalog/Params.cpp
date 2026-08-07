@@ -80,6 +80,18 @@ static void applyParamLine(const char line[])
     {
         params.setMeshBaudRate((uint32_t)value);
     }
+    else if (strcmp(key, "GPSMINSAT") == 0)
+    {
+        params.setGpsMinSatellites((uint8_t)value);
+    }
+    else if (strcmp(key, "DATALOGGERUTC") == 0)
+    {
+        params.setDataloggerUtc(value != 0);
+    }
+    else if (strcmp(key, "MESHUTC") == 0)
+    {
+        params.setMeshUtc(value != 0);
+    }
     else
     {
         Serial.print(F("[Params] Avertissement : cle inconnue ignoree : "));
@@ -93,6 +105,9 @@ void Params::begin()
     logWriteIntervalMs = LOG_WRITE_INTERVAL_MS_DEFAULT;
     gpsBaudRate = UART_GPS_BAUD;
     meshBaudRate = MESH_BAUD_DEFAULT;
+    gpsMinSatellites = GPS_MINIMUM_SATELLITES;
+    dataloggerUtc = false;
+    meshUtc = false;
 
     load();
 
@@ -103,7 +118,13 @@ void Params::begin()
     Serial.print(F(" ms (0 = a chaque trame), GPSBAUD = "));
     Serial.print(gpsBaudRate);
     Serial.print(F(", MESHBAUD = "));
-    Serial.println(meshBaudRate);
+    Serial.print(meshBaudRate);
+    Serial.print(F(", GPSMINSAT = "));
+    Serial.print(gpsMinSatellites);
+    Serial.print(F(", DATALOGGERUTC = "));
+    Serial.print(dataloggerUtc);
+    Serial.print(F(", MESHUTC = "));
+    Serial.println(meshUtc);
 }
 
 void Params::load()
@@ -166,6 +187,12 @@ void Params::save()
     paramsFile.println(gpsBaudRate);
     paramsFile.print(F("MESHBAUD="));
     paramsFile.println(meshBaudRate);
+    paramsFile.print(F("GPSMINSAT="));
+    paramsFile.println(gpsMinSatellites);
+    paramsFile.print(F("DATALOGGERUTC="));
+    paramsFile.println(dataloggerUtc ? 1 : 0);
+    paramsFile.print(F("MESHUTC="));
+    paramsFile.println(meshUtc ? 1 : 0);
     paramsFile.flush();
     paramsFile.close();
 
@@ -211,4 +238,34 @@ uint32_t Params::getMeshBaudRate() const
 void Params::setMeshBaudRate(uint32_t baudRate)
 {
     meshBaudRate = baudRate;
+}
+
+uint8_t Params::getGpsMinSatellites() const
+{
+    return gpsMinSatellites;
+}
+
+void Params::setGpsMinSatellites(uint8_t minSatellites)
+{
+    gpsMinSatellites = minSatellites;
+}
+
+bool Params::getDataloggerUtc() const
+{
+    return dataloggerUtc;
+}
+
+void Params::setDataloggerUtc(bool useUtc)
+{
+    dataloggerUtc = useUtc;
+}
+
+bool Params::getMeshUtc() const
+{
+    return meshUtc;
+}
+
+void Params::setMeshUtc(bool useUtc)
+{
+    meshUtc = useUtc;
 }

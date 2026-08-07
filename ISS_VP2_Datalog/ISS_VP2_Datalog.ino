@@ -10,6 +10,7 @@
 #include "Params.h"
 #include "SerialConsole.h"
 #include "EventLog.h"
+#include "LocationLog.h"
 #include "DataLogger.h"
 
 #if ISS_WIRELESS
@@ -52,6 +53,7 @@ void setup()
     // HalPins::beginSdCard() (idempotent), qui l'initialise si necessaire.
     params.begin();
     logEventBegin();
+    locationLogBegin();
     logEvent(F("Demarrage ISS_VP2_Datalog"));
 
     timeManager.begin();

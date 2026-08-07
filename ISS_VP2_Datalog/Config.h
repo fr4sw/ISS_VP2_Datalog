@@ -39,6 +39,9 @@
 #define USE_OTA        0
 #define USE_BME680     1         // capteur temp, Hum, pression interne (et gaz eventuellement)
 #define USE_MESHTASTIC 1         // liaison serie vers un appareil Meshtastic (T114), voir MeshLink.h
+#define USE_BLE        1         // annonce BLE minimale (donnees courantes en lecture seule pour une
+                                  // appli generique type nRF Connect/LightBlue, pas d'appli dediee),
+                                  // voir BleLink.h
 
 // --- Constantes protocole ISS (Davis Vantage Pro2) ---
 #define ISS_FRAME_MAX_LENGTH        8   // longueur max, cas FSK avec CRC
@@ -83,6 +86,17 @@
 // GPS_TIMEOUT genereux : un premier point a froid (cold start) peut
 // demander de 5 a 15 minutes, pas quelques secondes.
 #define GPS_TIMEOUT                    900000UL   // ms (15 min), avant abandon d'une synchro GPS
+// Valeur PAR DEFAUT uniquement : la valeur reellement utilisee est le
+// PARAMETRE GPSMINSAT (module Params), modifiable sans reprogrammer.
+// Seuil unique, utilise a la fois pour accepter un point date/heure ET
+// pour accepter/enregistrer une position (latitude/longitude) : la
+// precision de position depend fortement du nombre de satellites,
+// contrairement a l'heure (correcte des 4 satellites). Indicatif (DOP
+// variable selon l'environnement, ne pas prendre comme une garantie) :
+//     4 satellites  ~50 m de precision position (heure : OK)
+//     8 satellites  ~5 m de precision position
+// A augmenter (ex : 8) si la position doit etre exploitable, en sachant
+// que cela rallonge la duree d'acquisition GPS.
 #define GPS_MINIMUM_SATELLITES         4
 // isValid() de TinyGPSPlus indique seulement qu'une valeur a deja ete
 // decodee au moins une fois depuis le demarrage, pas qu'elle est fraiche :
@@ -122,6 +136,20 @@
 // prevu (colonne creneauTransmission).
 #define TRANSMISSION_SLOT_MINUTES   5
 
+// Court delai apres la fermeture du creneau de 5 min avant l'envoi de la
+// telemetrie Mesh : laisse le temps a une derniere trame ISS en cours de
+// traitement de se terminer avant de figer/envoyer la synthese du creneau
+// (evite un effet de bord ou l'envoi partirait avec des donnees pas tout
+// a fait figees). Non bloquant (voir DataLogger::update()).
+#define MESH_SEND_SETTLE_MS            200UL
+
+// Volume d'eau par basculement de l'auget (bucket Davis metrique). A
+// CONFIRMER sur ce materiel (le collecteur imperial, 0,01 pouce/0,254 mm,
+// existe aussi et n'est pas distinguable par logiciel).
+#define RAIN_MM_PER_TIP                 0.2f
+// Duree sans nouveau clic de pluie avant de considerer un episode termine.
+#define RAIN_EPISODE_TIMEOUT_MS         1800000UL   // ms (30 min)
+
 // --- timeout écriture carte SD (pour ne pas écrire trop souvent) ---
 // Valeur PAR DEFAUT uniquement : la valeur reellement utilisee est un
 // PARAMETRE (module Params), modifiable sans reprogrammer, persistee sur
@@ -133,19 +161,28 @@
 // Noms courts 8.3 (FAT), portables entre coeurs Arduino.
 #define PARAMS_FILE_NAME     "PARAMS.TXT"
 #define EVENTLOG_FILE_NAME   "EVENTS.LOG"
+#define LOCATION_FILE_NAME   "LOCATION.LOG"   // historique des positions GPS (voir LocationLog.h),
+                                               // separe du CSV temps reel : une position change tres
+                                               // rarement (station fixe), inutile de la repeter sur
+                                               // chaque ligne ecrite toutes les 30s
 
 // --- Capteur interieur BME680 ---
 #define BME680_READ_INTERVAL_MS   30000UL   // ms, periode entre deux mesures 30s pour debug, ensuite 1 à 5 minutes
 
 #define DEBUG              1   // 1 = affiche les acquisitions de données, 0 = production
 
-#define DEBUG_RAW_FRAMES   0   // 1 = affiche chaque trame brute recue en
+#define DEBUG_RAW_FRAMES   1   // 1 = affiche chaque trame brute recue en
                                 // hexadecimal avant decodage, 0 = production
 
 #define DEBUG_GPS          0   // 1 = affiche uniquement l'heure UTC et le
                                 // nombre de satellites decodes par le GPS
                                 // (le flux NMEA complet est trop volumineux
                                 // pour DEBUG_RAW_FRAMES), 0 = production
+
+#define DEBUG_MESH         1   // 1 = affiche sur le moniteur serie les
+                                // trames Meshtastic echangees (envoyees ET
+                                // recues) en hexadecimal, voir MeshLink.cpp,
+                                // 0 = production
 
 // Marge de resynchronisation : duree de 100 bits au debit RS485 utilise,
 // convertie en microsecondes. A ce debit, une trame complete arrive

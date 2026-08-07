@@ -29,6 +29,25 @@
 //                                           (bauds), meme port physique que
 //                                           le GPS (voir SharedUart.h).
 //             setMeshBaudRate()
+//             getGpsMinSatellites()       - nombre minimum de satellites
+//                                           exige pour accepter un point
+//                                           GPS (date/heure ET position),
+//                                           voir Config.h : GPS_MINIMUM_SATELLITES
+//                                           pour l'indication de precision.
+//             setGpsMinSatellites()
+//             getDataloggerUtc()          - true = horodatage CSV/EVENTS.LOG
+//                                           en UTC, false (defaut) = heure
+//                                           locale (TZ, voir ci-dessus).
+//             setDataloggerUtc()
+//             getMeshUtc()                - true = horodatage transmis sur
+//                                           le mesh en UTC, false (defaut) =
+//                                           heure locale. NE CONCERNE PAS le
+//                                           champ Telemetry.time actuel
+//                                           (fixed32 UTC impose par le
+//                                           protocole Meshtastic, voir
+//                                           MeshtasticTelemetry.h) : reserve
+//                                           a un futur canal texte/lisible.
+//             setMeshUtc()
 // Format fichier PARAMS_FILE_NAME : une ligne par parametre, "CLE=VALEUR"
 //             (nombres entiers uniquement, pas d'espaces), lignes commencant
 //             par '#' ignorees (commentaires). Exemple :
@@ -37,6 +56,9 @@
 //                 LOGINTERVAL=30000
 //                 GPSBAUD=9600
 //                 MESHBAUD=38400
+//                 GPSMINSAT=4
+//                 DATALOGGERUTC=0
+//                 MESHUTC=0
 // ============================================================================
 #pragma once
 #include <Arduino.h>
@@ -59,6 +81,15 @@ public:
     uint32_t getMeshBaudRate() const;
     void     setMeshBaudRate(uint32_t baudRate);
 
+    uint8_t  getGpsMinSatellites() const;
+    void     setGpsMinSatellites(uint8_t minSatellites);
+
+    bool     getDataloggerUtc() const;
+    void     setDataloggerUtc(bool useUtc);
+
+    bool     getMeshUtc() const;
+    void     setMeshUtc(bool useUtc);
+
 private:
     void load();
 
@@ -66,6 +97,9 @@ private:
     uint32_t logWriteIntervalMs;
     uint32_t gpsBaudRate;
     uint32_t meshBaudRate;
+    uint8_t  gpsMinSatellites;
+    bool     dataloggerUtc;
+    bool     meshUtc;
 };
 
 extern Params params;

@@ -38,6 +38,16 @@
 //                                 millis() ecoule. Renvoie false si aucun
 //                                 point n'a encore ete obtenu depuis le
 //                                 demarrage.
+//             gpsLastLocation() - derniere position (latitude/longitude,
+//                                 degres decimaux WGS84) obtenue en meme
+//                                 temps qu'un point date/heure valide (meme
+//                                 seuil GPS_MINIMUM_SATELLITES/Params, voir
+//                                 Config.h pour l'indication de precision
+//                                 selon le nombre de satellites). Renvoie
+//                                 false si aucune position n'est encore
+//                                 disponible. N'est appelee QUE par
+//                                 TimeManager (règle 102), jamais
+//                                 directement par DataLogger ou MeshLink.
 // Dépendances : Bibliotheque "TinyGPSPlus" (Mikal Hart, Arduino Library
 //             Manager) : parseur NMEA eprouve, evite d'ecrire un parseur
 //             "maison" (règle 15 : pas de code intelligent).
@@ -49,6 +59,7 @@
 
 bool gpsBegin();
 void gpsUpdate();
+bool gpsLastLocation(float &latitudeDeg, float &longitudeDeg, uint8_t &satelliteCount);
 
 #if TIME_MODE == TIME_MODE_GPS_ONLY
 bool gpsNow(uint32_t &utcUnixTime);
