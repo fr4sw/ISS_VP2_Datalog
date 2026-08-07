@@ -56,8 +56,17 @@
 #define TELEMETRY_FIELD_ENVIRONMENT_METRICS   3   // EnvironmentMetrics (voir ci-dessous)
 
 // --- meshtastic/telemetry.proto : message EnvironmentMetrics ---
+// https://buf.build/meshtastic/protobufs/docs/master%3Ameshtastic#meshtastic.EnvironmentMetrics
 // Champs vent/pluie presents nativement (ajoutes pour les stations meteo) :
 // exactement ce dont ce projet a besoin, pas de detournement de champ.
+// autres champs potentiellement utiles : 
+// 7 IAQ (BME680) indice de qualité de l'air
+// 9 Lux, 10 White Lux, 11 IR Lux, 12 UV lux
+// 17 wind lull (vent calme)
+// 18 Radiation
+// 20 Pluie dernières 24h -> à implémenter
+// 21 Sol : humidité, 22 Sol temperature
+
 #define ENV_FIELD_TEMPERATURE           1   // float, °C
 #define ENV_FIELD_RELATIVE_HUMIDITY     2   // float, %
 #define ENV_FIELD_BAROMETRIC_PRESSURE   3   // float, hPa

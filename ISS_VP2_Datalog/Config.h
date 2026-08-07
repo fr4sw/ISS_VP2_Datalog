@@ -123,6 +123,14 @@
 // du texte de debug apres la poignee de main, avant de lui envoyer la
 // telemetrie.
 #define MESH_HANDSHAKE_SETTLE_MS    250UL
+// Duree max pendant laquelle l'alimentation Mesh est maintenue APRES
+// l'envoi, en attendant une reponse du module T114 (voir MeshLink.cpp :
+// meshLinkUpdate()). Ecrire les octets sur l'UART ne signifie pas que le
+// module a fini de les emettre sur le reseau radio - couper l'alimentation
+// immediatement apres l'ecriture ne lui en laisse pas le temps. Non
+// bloquant (verifie a chaque loop(), pas d'attente active) : n'empeche PAS
+// la reception RS485 pendant ce delai.
+#define MESH_ACK_TIMEOUT_MS         180000UL   // ms (3 min)
 
 // --- Creneau de "transmission" (règle Davis/WeeWx/Weatherlink) ---
 // Contrairement a l'ecriture SD (LOG_WRITE_INTERVAL_MS_DEFAULT, plus

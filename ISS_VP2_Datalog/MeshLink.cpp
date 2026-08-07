@@ -32,6 +32,13 @@ static const uint8_t MESHTASTIC_FRAME_START2 = 0xC3;
 // le protocole.
 static const uint32_t MESH_WANT_CONFIG_NONCE = 1;
 
+// Machine a etats minimale pour l'attente d'accuse de reception (voir
+// MeshLink.h : meshLinkUpdate()). Pas d'enum dediee pour un simple booleen -
+// un seul envoi a la fois est possible (règle 15 : pas de complexite non
+// necessaire).
+static bool          meshWaitingForAck = false;
+static unsigned long meshAckWaitStartMillis = 0;
+
 #if DEBUG_MESH
 // Affiche un tampon d'octets en hexadecimal sur le moniteur serie, prefixe
 // par sa direction (TX/RX) - c'est la seule chose exploitable a l'oeil pour
@@ -118,11 +125,37 @@ static void performHandshake()
 #endif
 }
 
+// Coupure complete du lien Mesh (voir MeshLink.h, point 6 de la sequence) :
+// Serial2.end() AVANT de couper l'alimentation - sur ce coeur nRF52, un
+// Serial2.begin(nouveauDebit) sans end() prealable ne reconfigure pas
+// fiablement le debit reel de l'UART (observe a l'oscilloscope : le debit
+// precedent - celui du GPS - restait actif malgre un begin() au bon debit
+// Mesh). Factorisee ici car appelee depuis deux endroits (accuse recu,
+// timeout) - voir meshLinkUpdate().
+static void meshShutdown()
+{
+    Serial2.end();
+    power.disableMesh();
+    sharedUartRelease(SHARED_UART_MESH);
+    meshWaitingForAck = false;
+}
+
 bool meshLinkSendEnvironmentTelemetry(uint32_t utcUnixTime,
                                        float temperatureC, float relativeHumidityPercent, float pressureHpa,
                                        uint16_t windDirectionDeg, float windSpeedKph, float windGustKph,
                                        float rainfall1hMm)
 {
+    if (meshWaitingForAck == true)
+    {
+        // Un envoi precedent est encore en attente de reponse (voir
+        // meshLinkUpdate()) : on ne l'interrompt jamais pour en demarrer un
+        // nouveau. Comme le timeout (MESH_ACK_TIMEOUT_MS, 3 min) est
+        // toujours inferieur au creneau de transmission (5 min, voir
+        // Config.h), ce cas devrait rester rare en pratique.
+        Serial.println(F("[MeshLink] Envoi precedent encore en attente de reponse : nouvel envoi differe"));
+        return false;
+    }
+
     bool busAcquired = sharedUartAcquire(SHARED_UART_MESH);
     if (busAcquired == false)
     {
@@ -142,24 +175,67 @@ bool meshLinkSendEnvironmentTelemetry(uint32_t utcUnixTime,
                                                         utcUnixTime, temperatureC, relativeHumidityPercent, pressureHpa,
                                                         windDirectionDeg, windSpeedKph, windGustKph, rainfall1hMm);
 
-    bool sendSuccess = false;
     if (built == false)
     {
         Serial.println(F("[MeshLink] Erreur : message de telemetrie trop volumineux pour le tampon"));
         logEvent(F("Erreur : message Meshtastic trop volumineux"));
+        meshShutdown();
+        return false;
     }
-    else
+
+    sendFramedToRadio(telemetryBuffer, telemetryLength);
+    Serial.println(F("[MeshLink] Telemetrie ecrite sur l'UART, attente d'une reponse du T114..."));
+    logEvent(F("Telemetrie ecrite vers Meshtastic, attente reponse"));
+
+    // Alimentation VOLONTAIREMENT maintenue (voir MeshLink.h) : ecrire les
+    // octets sur l'UART ne signifie pas que le T114 a fini de les emettre
+    // sur le reseau radio. La coupure se fait dans meshLinkUpdate(), sur
+    // reponse recue ou sur timeout.
+    meshWaitingForAck = true;
+    meshAckWaitStartMillis = millis();
+    return true;
+}
+
+void meshLinkUpdate()
+{
+    if (meshWaitingForAck == false)
     {
-        sendFramedToRadio(telemetryBuffer, telemetryLength);
-        Serial.println(F("[MeshLink] Telemetrie envoyee vers Meshtastic"));
-        logEvent(F("Telemetrie envoyee vers Meshtastic"));
-        sendSuccess = true;
+        return;
     }
 
-    power.disableMesh();
-    sharedUartRelease(SHARED_UART_MESH);
+    if (Serial2.available() > 0)
+    {
+        // Accuse de reception minimal (voir MeshLink.h - LIMITE ASSUMEE) :
+        // n'importe quel octet recu du T114 est considere comme la preuve
+        // qu'il est bien en train de repondre, sans decoder le FromRadio.
+#if DEBUG_MESH
+        uint8_t rxBuffer[64];
+        size_t  rxLength = 0;
+        while ((Serial2.available() > 0) && (rxLength < sizeof(rxBuffer)))
+        {
+            rxBuffer[rxLength] = (uint8_t)Serial2.read();
+            rxLength = rxLength + 1;
+        }
+        debugPrintFrame("RX (reponse au ToRadio.packet)", rxBuffer, rxLength);
+#else
+        while (Serial2.available() > 0)
+        {
+            Serial2.read();
+        }
+#endif
+        Serial.println(F("[MeshLink] Reponse recue du T114 : coupure de l'alimentation Mesh"));
+        logEvent(F("Reponse Meshtastic recue"));
+        meshShutdown();
+        return;
+    }
 
-    return sendSuccess;
+    unsigned long ackWaitElapsed = millis() - meshAckWaitStartMillis;
+    if (ackWaitElapsed >= MESH_ACK_TIMEOUT_MS)
+    {
+        Serial.println(F("[MeshLink] Timeout sans reponse du T114 : coupure de l'alimentation Mesh"));
+        logEvent(F("Timeout reponse Meshtastic"));
+        meshShutdown();
+    }
 }
 
 #endif // USE_MESHTASTIC

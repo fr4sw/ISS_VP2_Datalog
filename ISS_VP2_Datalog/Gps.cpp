@@ -51,8 +51,11 @@ static bool gpsTryStartAcquisition()
     {
         // Bus partage (Serial2) actuellement utilise par Mesh : on ne
         // force jamais - voir SharedUart.h. Nouvelle tentative au prochain
-        // appel de gpsUpdate() (quelques millisecondes), la fenetre
-        // d'indisponibilite du bus etant toujours tres courte.
+        // appel de gpsUpdate(). Fenetre d'indisponibilite generalement
+        // courte, mais peut aller jusqu'a MESH_ACK_TIMEOUT_MS (3 min, voir
+        // MeshLink.cpp : meshLinkUpdate()) si le T114 ne repond pas -
+        // GPS_TIMEOUT (15 min) reste tres largement suffisant pour
+        // absorber ce cas.
         return false;
     }
 
@@ -103,6 +106,12 @@ static void gpsApplyFix(uint32_t fixUnixTime, uint8_t satelliteCount)
     gpsEverSynced = true;
 
     sharedUartRelease(SHARED_UART_GPS);
+    // Serial2.end() AVANT de couper l'alimentation : sur ce coeur nRF52,
+    // un Serial2.begin(nouveauDebit) sans end() prealable ne reconfigure
+    // pas fiablement le debit reel de l'UART (observe a l'oscilloscope :
+    // le Mesh transmettait a l'ancien debit GPS malgre un begin() au bon
+    // debit Mesh). Indispensable des que Serial2 change de "proprietaire"
+    // (GPS <-> Mesh, voir SharedUart.h) ou de debit.
     Serial2.end();
     power.disableGps();
     gpsState = GPS_STATE_WAITING;
@@ -271,6 +280,7 @@ void gpsUpdate()
         logEvent(F("Erreur : timeout acquisition GPS"));
 
         sharedUartRelease(SHARED_UART_GPS);
+        Serial2.end();   // voir le commentaire dans gpsApplyFix() ci-dessus
         power.disableGps();
         gpsState = GPS_STATE_WAITING;
         gpsStateStartMillis = millis();

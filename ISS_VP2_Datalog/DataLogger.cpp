@@ -208,10 +208,6 @@ void DataLogger::logRecord(const IssData &data)
         return;
     }
 
-#if DEBUG
-    printDecodedValue(data);
-#endif
-
     currentState.stationId = data.stationId;
     currentState.batteryLow = data.batteryLow;
     currentState.frameValid = true;
@@ -246,6 +242,21 @@ void DataLogger::logRecord(const IssData &data)
     framesReceivedInSlot = framesReceivedInSlot + 1;
 #if DEBUG
     framesReceivedSinceLastWrite = framesReceivedSinceLastWrite + 1;
+    // Numero de cette trame DANS le creneau de 5 min en cours (règle
+    // utilisateur : "ajouter avant la trame brute le numero/comptage de
+    // trame au sens 5 minutes, pour verifier ou est la perte"). Imprime
+    // APRES l'incrementation ci-dessus (et apres checkReceptionSlotBoundary()
+    // au-dessus, qui a pu remettre framesReceivedInSlot a 0 si cette trame
+    // est la premiere du nouveau creneau) : c'est bien le numero exact de
+    // CETTE trame, jamais celui d'avant. Repart a 1 en debut de creneau, ce
+    // qui permet de voir immediatement a l'oeil si la perte se produit en
+    // debut de creneau (le "1" tarde a apparaitre / saute directement a un
+    // nombre > 1) ou en fin de creneau (le dernier numero avant le prochain
+    // "1" est nettement en dessous de l'attendu, ~120 pour la station 0).
+    Serial.print(F("[DataLogger] Trame #"));
+    Serial.print(framesReceivedInSlot);
+    Serial.println(F(" du creneau en cours"));
+    printDecodedValue(data);
 #endif
 
     // Un clic de pluie (changement du compteur, pas seulement une
@@ -583,6 +594,8 @@ void DataLogger::update()
     checkRainEpisodeTimeout();
 
 #if USE_MESHTASTIC
+    meshLinkUpdate();
+
     if ((meshSendPending == true) && (millis() >= meshSendDueMillis))
     {
         meshSendPending = false;
