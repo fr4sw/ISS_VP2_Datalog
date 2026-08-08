@@ -73,6 +73,16 @@
   // ambiguite sur le sens actif/inactif dans Power.cpp).
   #define POWER_ENABLE_ACTIVE_LEVEL    LOW
   #define POWER_ENABLE_INACTIVE_LEVEL  HIGH
+
+  // LED_BLUE (definie par variant.h de la carte XIAO nRF52840, PAS par ce
+  // projet) : LED distincte de PIN_LED/LED_RED ci-dessus. La bibliotheque
+  // Bluefruit (USE_BLE, voir BleLink.h) la pilote ELLE-MEME en interne
+  // (clignotement pendant l'annonce/la connexion) via
+  // Bluefruit.autoConnLed() - aucun digitalWrite() sur cette broche
+  // n'existe dans ce projet. Desactive par defaut dans BleLink.cpp
+  // (Bluefruit.autoConnLed(false)) pour economiser le courant sur une
+  // station alimentee sur batterie/panneau solaire ; reactiver la-bas
+  // (pas ici) si le retour visuel est utile en phase de mise au point.
   
   #define PIN_I2C_SDA      7    // D7 P1.12
   #define PIN_I2C_SCL      8    // D8 P1.13

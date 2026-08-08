@@ -95,6 +95,7 @@ void DataLogger::begin()
     lastTransmissionSlotIndex = -1;
     framesReceivedInSlot = 0;
     lastReceptionPercent = 0;
+    lastClosedSlotFrameCount = 0;
     frameGapBaselineSet = false;
     lastFrameReceivedMillis = 0;
     missedFrameGapCount = 0;
@@ -152,7 +153,7 @@ void DataLogger::begin()
     logEvent(F("Nouveau fichier de log CSV cree"));
 
 #if DEBUG
-    logFile.println(F("seq,date,heure,stationId,batterieFaible,temperatureC,humidite,rayonnementSolaire,indexUV,pluieMmH,compteurPluie,rafaleKph,vitesseVentKph,directionVent,temperatureInterieureC,humiditeInterieure,pressionInterieureHpa,creneauTransmission,tauxReceptionPct,framesRecuesDepuisEcriture,framesRecuesCreneauEnCours,tramesRateesCreneauEnCours,intervalleMoyenMesureMs"));
+    logFile.println(F("seq,date,heure,stationId,batterieFaible,temperatureC,humidite,rayonnementSolaire,indexUV,pluieMmH,compteurPluie,rafaleKph,vitesseVentKph,directionVent,temperatureInterieureC,humiditeInterieure,pressionInterieureHpa,creneauTransmission,tauxReceptionPct,framesRecuesDepuisEcriture,framesRecuesCreneauEnCours,tramesRateesCreneauEnCours,intervalleMoyenMesureMs,framesTotalCreneauFerme"));
 #else
     logFile.println(F("seq,date,heure,stationId,batterieFaible,temperatureC,humidite,rayonnementSolaire,indexUV,pluieMmH,compteurPluie,rafaleKph,vitesseVentKph,directionVent,temperatureInterieureC,humiditeInterieure,pressionInterieureHpa,creneauTransmission,tauxReceptionPct"));
 #endif
@@ -468,6 +469,16 @@ bool DataLogger::checkReceptionSlotBoundary(const char timeString[7], uint8_t st
         receptionPercentFloat = 100.0f;
     }
     lastReceptionPercent = (uint8_t)(receptionPercentFloat + 0.5f);
+    // Total REEL du creneau qui vient de se refermer, avant remise a zero
+    // ci-dessous - voir DataLogger.h. Sans cette copie, la seule trace du
+    // total final etait le message Serial ci-dessous (jamais persistee) :
+    // la colonne CSV "framesRecuesCreneauEnCours" ne montre, elle, QUE le
+    // compte en cours d'accumulation du NOUVEAU creneau au moment ou la
+    // ligne est ecrite (règle utilisateur : bug releve, la valeur "109"
+    // observee dans le CSV n'etait pas le total final du creneau - qui
+    // etait bien de 117, comme le montrait le message Serial - mais le
+    // dernier releve intermediaire, 30s avant la fin reelle du creneau).
+    lastClosedSlotFrameCount = framesReceivedInSlot;
 
     Serial.print(F("[DataLogger] Taux de reception sur le creneau ecoule : "));
     Serial.print(lastReceptionPercent);
@@ -594,7 +605,7 @@ void DataLogger::writeLine(const char dateString[9], const char timeString[7], b
     // consultable via GET sur la console serie, jamais archive - ajoute
     // ici pour qu'il reste disponible en relisant le CSV plus tard, sans
     // avoir besoin d'une session serie live au bon moment.
-    snprintf(line, sizeof(line), "%lu,%s,%s,%u,%u,%.1f,%.1f,%u,%.1f,%.1f,%u,%u,%u,%s,%s,%s,%s,%u,%s,%u,%u,%u,%lu",
+    snprintf(line, sizeof(line), "%lu,%s,%s,%u,%u,%.1f,%.1f,%u,%.1f,%.1f,%u,%u,%u,%s,%s,%s,%s,%u,%s,%u,%u,%u,%lu,%u",
              sequenceNumber, dateString, timeString,
              currentState.stationId, currentState.batteryLow,
              currentState.temperatureOutside, currentState.humidityOutside,
@@ -604,7 +615,7 @@ void DataLogger::writeLine(const char dateString[9], const char timeString[7], b
              indoorTemperatureField, indoorHumidityField, indoorPressureField,
              transmissionSlotFlag, receptionField,
              framesReceivedSinceLastWrite, framesReceivedInSlot, missedFrameGapCount,
-             (unsigned long)params.getIssAverageFrameIntervalMs());
+             (unsigned long)params.getIssAverageFrameIntervalMs(), lastClosedSlotFrameCount);
 #else
     snprintf(line, sizeof(line), "%lu,%s,%s,%u,%u,%.1f,%.1f,%u,%.1f,%.1f,%u,%u,%u,%s,%s,%s,%s,%u,%s",
              sequenceNumber, dateString, timeString,

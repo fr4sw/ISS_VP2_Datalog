@@ -55,11 +55,20 @@ void setup()
     // Params et EventLog ont besoin de la carte SD : leur begin() appelle
     // HalPins::beginSdCard() (idempotent), qui l'initialise si necessaire.
     params.begin();
+
+    // timeManager.begin() DOIT precede tout appel a logEvent() (y compris
+    // le tout premier ci-dessous) : logEvent() appelle en interne
+    // timeManager.now() pour horodater sa ligne, qui echoue si le RTC/GPS
+    // n'a pas encore ete initialise (bug releve : le tout premier
+    // logEvent() de la session affichait a tort "[TimeManager] Erreur :
+    // RTC indisponible", alors que le RTC etait en realite disponible -
+    // simplement pas encore initialise a ce point du demarrage).
+    timeManager.begin();
+
     logEventBegin();
     locationLogBegin();
     logEvent(F("Demarrage ISS_VP2_Datalog"));
 
-    timeManager.begin();
     dataLogger.begin();
 
 #if ISS_WIRELESS
@@ -75,16 +84,43 @@ void setup()
     bmeIndoor.begin();
 #endif
 #if USE_BLE
-    bleLinkBegin();
+    if (params.getBleEnabled() == true)
+    {
+        bleLinkBegin();
+    }
 #endif
 }
+
+#if DEBUG_RAW_FRAMES
+// Affiche une trame brute en hexadecimal, prefixee comme demande. Factorise
+// ici car appelee depuis deux endroits de loop() (trame decodee avec succes
+// -> prefixe avec son numero dans le creneau ; trame non decodable -> pas
+// de numero, voir loop()).
+static void printRawFrame(const char prefix[], const IssRawFrame &rawFrame)
+{
+    Serial.print(prefix);
+    for (uint8_t index = 0; index < rawFrame.length; index++)
+    {
+        if (rawFrame.bytes[index] < 0x10)
+        {
+            Serial.print(F("0"));
+        }
+        Serial.print(rawFrame.bytes[index], HEX);
+        Serial.print(F(" "));
+    }
+    Serial.println();
+}
+#endif
 
 void loop()
 {
     serialConsoleUpdate();
     timeManager.update();
 #if USE_BLE
-    bleLinkUpdate();
+    if (params.getBleEnabled() == true)
+    {
+        bleLinkUpdate();
+    }
 #endif
 
 #if USE_BME680
@@ -111,29 +147,39 @@ void loop()
 
     if (frameReceived == true)
     {
-#if DEBUG_RAW_FRAMES
-        Serial.print(F("[Main] Trame brute : "));
-        for (uint8_t index = 0; index < rawFrame.length; index++)
-        {
-            if (rawFrame.bytes[index] < 0x10)
-            {
-                Serial.print(F("0"));
-            }
-            Serial.print(rawFrame.bytes[index], HEX);
-            Serial.print(F(" "));
-        }
-        Serial.println();
-#endif
-
         IssData decodedData;
         bool decodeSuccess = decodeFrame(rawFrame, decodedData);
         if (decodeSuccess == true)
         {
             dataLogger.logRecord(decodedData);
+
+#if DEBUG_RAW_FRAMES
+            // Imprime APRES logRecord() (pas avant, comme precedemment) :
+            // c'est logRecord() qui determine le numero de cette trame
+            // dans le creneau de 5 min en cours (voir
+            // DataLogger::checkReceptionSlotBoundary()), donc ce numero
+            // n'est connu qu'une fois logRecord() revenu. Fusionne ce qui
+            // etait avant deux lignes distinctes ("[DataLogger] Trame #N
+            // du creneau en cours" + "[Main] Trame brute : ...") en une
+            // seule, pour correler immediatement le numero et le contenu
+            // de la trame sans avoir a rapprocher deux lignes a l'oeil.
+            // Tampon de 32 octets : "[Main] Trame brute #" (20) + jusqu'a
+            // 5 chiffres (uint16_t, max 65535) + " : " (3) + terminateur.
+            // Avec un tampon trop juste (bug releve par l'utilisateur : le
+            // "24" precedent tronquait AVANT le separateur " : ", collant
+            // le numero directement aux octets hexa sans espace - illisible
+            // a l'oeil, semblait montrer "aucun numero").
+            char prefix[32];
+            snprintf(prefix, sizeof(prefix), "[Main] Trame brute #%u : ", dataLogger.getLastFrameNumberInSlot());
+            printRawFrame(prefix, rawFrame);
+#endif
         }
         else
         {
             Serial.println(F("[Main] Erreur : trame ISS non decodable"));
+#if DEBUG_RAW_FRAMES
+            printRawFrame("[Main] Trame brute (non decodable) : ", rawFrame);
+#endif
         }
     }
 

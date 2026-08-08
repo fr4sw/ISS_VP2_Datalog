@@ -9,6 +9,15 @@
 #include "DataLogger.h"
 #include "EventLog.h"
 
+// Service DFU (mise a jour firmware par BLE) fourni cle en main par
+// Bluefruit - voir bleLinkBegin(). Ne fait qu'annoncer le point d'entree
+// qui redemarre la carte en mode bootloader ; c'est ENSUITE le bootloader
+// Adafruit nRF52 (deja preflashe sur cette carte, confirme par
+// l'utilisateur - PAS notre code applicatif) qui gere le DFU proprement
+// dit via son propre service BLE Nordic Secure DFU, avec un paquet .zip
+// genere par l'IDE Arduino / adafruit-nrfutil. Rien d'autre a coder ici.
+static BLEDfu bledfu;
+
 // --- Environmental Sensing Service (0x181A) et caracteristiques SIG
 // standard (voir BleLink.h). Chaque UUID/format/resolution vient du GATT
 // Specification Supplement du Bluetooth SIG - A VERIFIER avec un analyseur
@@ -94,6 +103,11 @@ void bleLinkBegin()
     // Reactiver avec Bluefruit.autoConnLed(true) si le retour visuel est
     // utile en phase de mise au point.
     Bluefruit.autoConnLed(false);
+
+    // DFU (mise a jour firmware OTA, voir la declaration de bledfu
+    // ci-dessus) - enregistre en premier, avant les autres services,
+    // ordre habituel des exemples Adafruit (bleuart_dfu et similaires).
+    bledfu.begin();
 
     essService.begin();
     beginFixedLenCharacteristic(temperatureChar, 2);

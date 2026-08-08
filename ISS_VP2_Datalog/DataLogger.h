@@ -164,6 +164,13 @@ private:
     int16_t  lastTransmissionSlotIndex;
     uint16_t framesReceivedInSlot;
     uint8_t  lastReceptionPercent;
+    // Total REEL de trames du dernier creneau ferme (voir
+    // checkReceptionSlotBoundary()) - a NE PAS confondre avec
+    // framesReceivedInSlot ci-dessus, qui refletera juste apres le compte
+    // du NOUVEAU creneau en cours d'accumulation (voir DEBUG CSV : colonne
+    // framesRecuesCreneauEnCours). C'est CE membre-ci qui donne le total
+    // final exploitable pour une verification a froid (relecture du CSV).
+    uint16_t lastClosedSlotFrameCount;
 
     // Mesure empirique de l'intervalle entre trames (voir Params::
     // getIssAverageFrameIntervalMs()) : remplace desormais la formule
