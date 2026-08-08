@@ -106,6 +106,17 @@ public:
     uint32_t getIssAverageFrameIntervalMs() const;
     void     setIssAverageFrameIntervalMs(uint32_t intervalMs);
 
+    // true (defaut) = annonce BLE active au demarrage (voir BleLink.h),
+    // false = BLE jamais initialise. Pris en compte uniquement au
+    // demarrage (ISS_VP2_Datalog.ino) : changer ce parametre a chaud via
+    // la console necessite un redemarrage pour prendre effet, la
+    // bibliotheque Bluefruit n'etant pas concue ici pour un arret/
+    // redemarrage complet a la volee (règle 26 : pas de complexite
+    // suplementaire pour un besoin non exprime - a etendre si un vrai
+    // besoin de bascule a chaud apparait).
+    bool     getBleEnabled() const;
+    void     setBleEnabled(bool enabled);
+
 private:
     void load();
 
@@ -117,6 +128,7 @@ private:
     bool     dataloggerUtc;
     bool     meshUtc;
     uint32_t issAverageFrameIntervalMs;
+    bool     bleEnabled;
 };
 
 extern Params params;

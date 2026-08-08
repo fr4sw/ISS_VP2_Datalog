@@ -89,6 +89,14 @@ public:
     void updateIndoorData(const IndoorData &data);
     void getSnapshot(Snapshot &snapshot) const;
 
+    // Numero (1..N) attribue a la DERNIERE trame traitee par logRecord()
+    // dans le creneau de 5 min en cours - voir ISS_VP2_Datalog.ino, qui
+    // l'utilise pour prefixer le dump de la trame brute correspondante
+    // ("[Main] Trame brute #N : ..."), sans dupliquer une ligne de log
+    // separee cote DataLogger. Valeur non significative avant la toute
+    // premiere trame recue (0).
+    uint16_t getLastFrameNumberInSlot() const;
+
 private:
     void printDecodedValue(const IssData &data);
     void accumulateWindSample(uint8_t windSpeedKph, uint16_t windDirectionDeg);

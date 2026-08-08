@@ -152,7 +152,7 @@ void DataLogger::begin()
     logEvent(F("Nouveau fichier de log CSV cree"));
 
 #if DEBUG
-    logFile.println(F("seq,date,heure,stationId,batterieFaible,temperatureC,humidite,rayonnementSolaire,indexUV,pluieMmH,compteurPluie,rafaleKph,vitesseVentKph,directionVent,temperatureInterieureC,humiditeInterieure,pressionInterieureHpa,creneauTransmission,tauxReceptionPct,framesRecuesDepuisEcriture,framesRecuesCreneauEnCours,tramesRateesCreneauEnCours"));
+    logFile.println(F("seq,date,heure,stationId,batterieFaible,temperatureC,humidite,rayonnementSolaire,indexUV,pluieMmH,compteurPluie,rafaleKph,vitesseVentKph,directionVent,temperatureInterieureC,humiditeInterieure,pressionInterieureHpa,creneauTransmission,tauxReceptionPct,framesRecuesDepuisEcriture,framesRecuesCreneauEnCours,tramesRateesCreneauEnCours,intervalleMoyenMesureMs"));
 #else
     logFile.println(F("seq,date,heure,stationId,batterieFaible,temperatureC,humidite,rayonnementSolaire,indexUV,pluieMmH,compteurPluie,rafaleKph,vitesseVentKph,directionVent,temperatureInterieureC,humiditeInterieure,pressionInterieureHpa,creneauTransmission,tauxReceptionPct"));
 #endif
@@ -203,6 +203,11 @@ void DataLogger::getSnapshot(Snapshot &snapshot) const
     snapshot.locationValid = lastLocationValid;
     snapshot.latitudeDeg = lastLocationLatitudeDeg;
     snapshot.longitudeDeg = lastLocationLongitudeDeg;
+}
+
+uint16_t DataLogger::getLastFrameNumberInSlot() const
+{
+    return framesReceivedInSlot;
 }
 
 // Accumule un echantillon de vitesse/direction (appele a CHAQUE trame,
@@ -296,20 +301,6 @@ void DataLogger::logRecord(const IssData &data)
 
 #if DEBUG
     framesReceivedSinceLastWrite = framesReceivedSinceLastWrite + 1;
-    // Numero de cette trame DANS le creneau de 5 min en cours (règle
-    // utilisateur : "ajouter avant la trame brute le numero/comptage de
-    // trame au sens 5 minutes, pour verifier ou est la perte"). Imprime
-    // APRES l'incrementation ci-dessus (et apres checkReceptionSlotBoundary()
-    // au-dessus, qui a pu remettre framesReceivedInSlot a 0 si cette trame
-    // est la premiere du nouveau creneau) : c'est bien le numero exact de
-    // CETTE trame, jamais celui d'avant. Repart a 1 en debut de creneau, ce
-    // qui permet de voir immediatement a l'oeil si la perte se produit en
-    // debut de creneau (le "1" tarde a apparaitre / saute directement a un
-    // nombre > 1) ou en fin de creneau (le dernier numero avant le prochain
-    // "1" est nettement en dessous de l'attendu).
-    Serial.print(F("[DataLogger] Trame #"));
-    Serial.print(framesReceivedInSlot);
-    Serial.println(F(" du creneau en cours"));
     printDecodedValue(data);
 #endif
 
@@ -598,8 +589,12 @@ void DataLogger::writeLine(const char dateString[9], const char timeString[7], b
     char line[300];
 #if DEBUG
     // Voir Remarque 4, DataLogger.h : uniquement pour verification du
-    // comptage de reception, jamais en production.
-    snprintf(line, sizeof(line), "%lu,%s,%s,%u,%u,%.1f,%.1f,%u,%.1f,%.1f,%u,%u,%u,%s,%s,%s,%s,%u,%s,%u,%u,%u",
+    // comptage de reception, jamais en production. intervalleMoyenMesureMs
+    // (Params::getIssAverageFrameIntervalMs()) etait jusqu'ici uniquement
+    // consultable via GET sur la console serie, jamais archive - ajoute
+    // ici pour qu'il reste disponible en relisant le CSV plus tard, sans
+    // avoir besoin d'une session serie live au bon moment.
+    snprintf(line, sizeof(line), "%lu,%s,%s,%u,%u,%.1f,%.1f,%u,%.1f,%.1f,%u,%u,%u,%s,%s,%s,%s,%u,%s,%u,%u,%u,%lu",
              sequenceNumber, dateString, timeString,
              currentState.stationId, currentState.batteryLow,
              currentState.temperatureOutside, currentState.humidityOutside,
@@ -608,7 +603,8 @@ void DataLogger::writeLine(const char dateString[9], const char timeString[7], b
              currentState.windGustKph, windSpeedAverageKph, windDirectionField,
              indoorTemperatureField, indoorHumidityField, indoorPressureField,
              transmissionSlotFlag, receptionField,
-             framesReceivedSinceLastWrite, framesReceivedInSlot, missedFrameGapCount);
+             framesReceivedSinceLastWrite, framesReceivedInSlot, missedFrameGapCount,
+             (unsigned long)params.getIssAverageFrameIntervalMs());
 #else
     snprintf(line, sizeof(line), "%lu,%s,%s,%u,%u,%.1f,%.1f,%u,%.1f,%.1f,%u,%u,%u,%s,%s,%s,%s,%u,%s",
              sequenceNumber, dateString, timeString,

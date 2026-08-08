@@ -64,8 +64,36 @@ static void beginFixedLenCharacteristic(BLECharacteristic &characteristic, uint1
 void bleLinkBegin()
 {
     Bluefruit.begin();
-    Bluefruit.setName(BLE_DEVICE_NAME);
+
+    // Bluefruit.setName() seul laisse la caracteristique GAP "Device Name"
+    // ECRITE PAR DEFAUT (permission NO_ACCESS non appliquee par la
+    // bibliotheque) - observe avec LightBlue, qui proposait de renommer
+    // l'appareil a distance. On appelle directement l'API SoftDevice
+    // sous-jacente pour figer le nom ET verrouiller l'ecriture en meme
+    // temps (le seul moyen de restreindre ce champ specifique du GAP, la
+    // lecture restant toujours publique quoi qu'il arrive - c'est standard
+    // BLE, pas une limite de ce code). A VERIFIER A LA COMPILATION (non
+    // teste ici, voir BleLink.h) : si sd_ble_gap_device_name_set() ou
+    // BLE_GAP_CONN_SEC_MODE_SET_NO_ACCESS ne sont pas trouves, chercher le
+    // nom exact dans ble_gap.h (SoftDevice S140, deja inclus
+    // transitivement par bluefruit.h).
+    ble_gap_conn_sec_mode_t nameWritePermission;
+    BLE_GAP_CONN_SEC_MODE_SET_NO_ACCESS(&nameWritePermission);
+    sd_ble_gap_device_name_set(&nameWritePermission, (const uint8_t *)BLE_DEVICE_NAME, strlen(BLE_DEVICE_NAME));
+
     Bluefruit.setTxPower(BLE_TX_POWER_DBM);
+
+    // La bibliotheque Bluefruit fait clignoter une LED (LED_BLUE / LED_CONN,
+    // definie dans variant.h de la carte - voir le cœur Seeeduino:nrf52,
+    // dossier variants/Seeed_XIAO_nRF52840) pendant l'annonce/la connexion
+    // BLE, PAR DEFAUT, sans code ecrit dans ce projet (comportement interne
+    // de Bluefruit.begin()). Desactive ici : une LED qui clignote en
+    // continu pendant toute la duree de l'annonce est une consommation
+    // parasite non negligeable sur une station alimentee sur batterie/
+    // panneau solaire (voir aussi le point OTA/consommation a venir).
+    // Reactiver avec Bluefruit.autoConnLed(true) si le retour visuel est
+    // utile en phase de mise au point.
+    Bluefruit.autoConnLed(false);
 
     essService.begin();
     beginFixedLenCharacteristic(temperatureChar, 2);
