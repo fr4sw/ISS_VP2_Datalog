@@ -74,6 +74,8 @@
 #define ENV_FIELD_WIND_SPEED           14   // float, m/s (PAS km/h : conversion a la charge de l'appelant)
 #define ENV_FIELD_WIND_GUST            16   // float, m/s
 #define ENV_FIELD_RAINFALL_1H          19   // float, mm
+#define ENV_FIELD_RAINFALL_24H         20   // float, mm - implemente (voir "a implementer" ci-dessus,
+                                             // desormais fait : cumul depuis minuit, voir DataLogger.cpp)
 
 // Conversion vitesse du vent : le projet calcule en km/h (DataLogger),
 // Meshtastic attend du m/s (EnvironmentMetrics.wind_speed/wind_gust).
@@ -86,7 +88,7 @@ bool meshBuildEnvironmentTelemetryToRadio(uint8_t *outputBuffer, size_t outputCa
                                            uint32_t utcUnixTime,
                                            float temperatureC, float relativeHumidityPercent, float pressureHpa,
                                            uint16_t windDirectionDeg, float windSpeedKph, float windGustKph,
-                                           float rainfall1hMm);
+                                           float rainfall1hMm, float rainfall24hMm);
 
 // Construit le message ToRadio "want_config_id" (poignee de main initiale,
 // voir MeshLink.cpp). configId est une valeur arbitraire non nulle choisie

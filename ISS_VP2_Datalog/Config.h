@@ -144,6 +144,19 @@
 // prevu (colonne creneauTransmission).
 #define TRANSMISSION_SLOT_MINUTES   5
 
+// Delai entre 2 trames ISS au-dela duquel on considere qu'au moins une
+// trame a probablement ete ratee entre les deux (voir DataLogger.cpp :
+// compteur missedFrameGapCount, DEBUG uniquement). Marge confortable par
+// rapport a l'intervalle theorique Davis (~2,5 a 2,56s selon la station,
+// voir issSecondsPerPacket()) : un ecart franc, pas un simple jitter.
+#define FRAME_GAP_WARNING_MS            3000UL
+
+// --- BLE (USE_BLE) - voir BleLink.h ---
+#define BLE_DEVICE_NAME          "ISS-VP2-Datalog"   // nom affiche par les applis de scan BLE
+#define BLE_UPDATE_INTERVAL_MS   5000UL   // frequence de rafraichissement des caracteristiques
+#define BLE_TX_POWER_DBM         4        // puissance d'emission (dBm), valeurs typiques nRF52 :
+                                           // -20/-16/-12/-8/-4/0/4/8
+
 // Court delai apres la fermeture du creneau de 5 min avant l'envoi de la
 // telemetrie Mesh : laisse le temps a une derniere trame ISS en cours de
 // traitement de se terminer avant de figer/envoyer la synthese du creneau
@@ -182,7 +195,7 @@
 #define DEBUG_RAW_FRAMES   1   // 1 = affiche chaque trame brute recue en
                                 // hexadecimal avant decodage, 0 = production
 
-#define DEBUG_GPS          0   // 1 = affiche uniquement l'heure UTC et le
+#define DEBUG_GPS          1   // 1 = affiche uniquement l'heure UTC et le
                                 // nombre de satellites decodes par le GPS
                                 // (le flux NMEA complet est trop volumineux
                                 // pour DEBUG_RAW_FRAMES), 0 = production

@@ -8,7 +8,7 @@ bool meshBuildEnvironmentTelemetryToRadio(uint8_t *outputBuffer, size_t outputCa
                                            uint32_t utcUnixTime,
                                            float temperatureC, float relativeHumidityPercent, float pressureHpa,
                                            uint16_t windDirectionDeg, float windSpeedKph, float windGustKph,
-                                           float rainfall1hMm)
+                                           float rainfall1hMm, float rainfall24hMm)
 {
     // Construction "de l'interieur vers l'exterieur" : chaque message
     // imbrique est d'abord serialise dans son propre petit tampon, puis
@@ -26,6 +26,7 @@ bool meshBuildEnvironmentTelemetryToRadio(uint8_t *outputBuffer, size_t outputCa
     environmentMetricsWriter.writeFloatField(ENV_FIELD_WIND_SPEED, windSpeedKph * KPH_TO_MPS);
     environmentMetricsWriter.writeFloatField(ENV_FIELD_WIND_GUST, windGustKph * KPH_TO_MPS);
     environmentMetricsWriter.writeFloatField(ENV_FIELD_RAINFALL_1H, rainfall1hMm);
+    environmentMetricsWriter.writeFloatField(ENV_FIELD_RAINFALL_24H, rainfall24hMm);
 
     uint8_t telemetryBuffer[64];
     ProtobufWriter telemetryWriter;

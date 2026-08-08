@@ -92,6 +92,10 @@ static void applyParamLine(const char line[])
     {
         params.setMeshUtc(value != 0);
     }
+    else if (strcmp(key, "ISSAVGINTERVALMS") == 0)
+    {
+        params.setIssAverageFrameIntervalMs((uint32_t)value);
+    }
     else
     {
         Serial.print(F("[Params] Avertissement : cle inconnue ignoree : "));
@@ -108,6 +112,7 @@ void Params::begin()
     gpsMinSatellites = GPS_MINIMUM_SATELLITES;
     dataloggerUtc = false;
     meshUtc = false;
+    issAverageFrameIntervalMs = 0;   // 0 = pas encore mesure, voir Params.h
 
     load();
 
@@ -124,7 +129,9 @@ void Params::begin()
     Serial.print(F(", DATALOGGERUTC = "));
     Serial.print(dataloggerUtc);
     Serial.print(F(", MESHUTC = "));
-    Serial.println(meshUtc);
+    Serial.print(meshUtc);
+    Serial.print(F(", ISSAVGINTERVALMS = "));
+    Serial.println(issAverageFrameIntervalMs);
 }
 
 void Params::load()
@@ -193,6 +200,8 @@ void Params::save()
     paramsFile.println(dataloggerUtc ? 1 : 0);
     paramsFile.print(F("MESHUTC="));
     paramsFile.println(meshUtc ? 1 : 0);
+    paramsFile.print(F("ISSAVGINTERVALMS="));
+    paramsFile.println(issAverageFrameIntervalMs);
     paramsFile.flush();
     paramsFile.close();
 
@@ -268,4 +277,14 @@ bool Params::getMeshUtc() const
 void Params::setMeshUtc(bool useUtc)
 {
     meshUtc = useUtc;
+}
+
+uint32_t Params::getIssAverageFrameIntervalMs() const
+{
+    return issAverageFrameIntervalMs;
+}
+
+void Params::setIssAverageFrameIntervalMs(uint32_t intervalMs)
+{
+    issAverageFrameIntervalMs = intervalMs;
 }

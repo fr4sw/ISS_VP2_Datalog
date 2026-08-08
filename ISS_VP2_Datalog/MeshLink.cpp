@@ -143,7 +143,7 @@ static void meshShutdown()
 bool meshLinkSendEnvironmentTelemetry(uint32_t utcUnixTime,
                                        float temperatureC, float relativeHumidityPercent, float pressureHpa,
                                        uint16_t windDirectionDeg, float windSpeedKph, float windGustKph,
-                                       float rainfall1hMm)
+                                       float rainfall1hMm, float rainfall24hMm)
 {
     if (meshWaitingForAck == true)
     {
@@ -173,7 +173,7 @@ bool meshLinkSendEnvironmentTelemetry(uint32_t utcUnixTime,
     size_t telemetryLength = 0;
     bool built = meshBuildEnvironmentTelemetryToRadio(telemetryBuffer, sizeof(telemetryBuffer), telemetryLength,
                                                         utcUnixTime, temperatureC, relativeHumidityPercent, pressureHpa,
-                                                        windDirectionDeg, windSpeedKph, windGustKph, rainfall1hMm);
+                                                        windDirectionDeg, windSpeedKph, windGustKph, rainfall1hMm, rainfall24hMm);
 
     if (built == false)
     {

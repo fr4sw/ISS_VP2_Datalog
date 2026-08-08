@@ -54,6 +54,6 @@
 bool meshLinkSendEnvironmentTelemetry(uint32_t utcUnixTime,
                                        float temperatureC, float relativeHumidityPercent, float pressureHpa,
                                        uint16_t windDirectionDeg, float windSpeedKph, float windGustKph,
-                                       float rainfall1hMm);
+                                       float rainfall1hMm, float rainfall24hMm);
 void meshLinkUpdate();
 #endif

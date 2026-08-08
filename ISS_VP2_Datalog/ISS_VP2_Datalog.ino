@@ -12,6 +12,9 @@
 #include "EventLog.h"
 #include "LocationLog.h"
 #include "DataLogger.h"
+#if USE_BLE
+    #include "BleLink.h"
+#endif
 
 #if ISS_WIRELESS
     #include "IssWireless.h"
@@ -71,12 +74,18 @@ void setup()
 #if USE_BME680
     bmeIndoor.begin();
 #endif
+#if USE_BLE
+    bleLinkBegin();
+#endif
 }
 
 void loop()
 {
     serialConsoleUpdate();
     timeManager.update();
+#if USE_BLE
+    bleLinkUpdate();
+#endif
 
 #if USE_BME680
     bmeIndoor.update();

@@ -18,6 +18,20 @@
 
 DataLogger dataLogger;
 
+// Copie une chaine dans un tampon de taille fixe en garantissant TOUJOURS
+// la terminaison, quelle que soit la longueur de la source - contrairement
+// a strncpy(dest, src, sizeof(dest)) seul, qui ne termine pas dest si src
+// fait exactement sizeof(dest) caracteres ou plus (d'ou l'avertissement
+// -Wstringop-truncation : le compilateur ne peut pas prouver que ce cas
+// n'arrivera jamais, meme si en pratique dateString/timeString ont ici une
+// longueur fixe connue). destSize doit etre > 0 (jamais un tampon de
+// taille nulle dans ce fichier).
+static void safeStrCopy(char *dest, const char *src, size_t destSize)
+{
+    strncpy(dest, src, destSize - 1);
+    dest[destSize - 1] = '\0';
+}
+
 static void sdDateTimeCallback(uint16_t *fatDate, uint16_t *fatTime)
 {
     char dateString[9];
@@ -67,6 +81,8 @@ void DataLogger::begin()
     lastRainEventDate[0] = '\0';
     lastRainEventTime[0] = '\0';
     lastRainEventCumulativeMm = 0.0f;
+    dailyRainDateReference[0] = '\0';
+    dailyRainCumulativeMm = 0.0f;
     lastMeasurementDate[0] = '\0';
     lastMeasurementTime[0] = '\0';
     lastWindSpeedKph = 0;
@@ -79,6 +95,11 @@ void DataLogger::begin()
     lastTransmissionSlotIndex = -1;
     framesReceivedInSlot = 0;
     lastReceptionPercent = 0;
+    frameGapBaselineSet = false;
+    lastFrameReceivedMillis = 0;
+    missedFrameGapCount = 0;
+    normalIntervalSumMs = 0;
+    normalIntervalCount = 0;
 #if USE_MESHTASTIC
     meshSendPending = false;
     meshSendDueMillis = 0;
@@ -131,7 +152,7 @@ void DataLogger::begin()
     logEvent(F("Nouveau fichier de log CSV cree"));
 
 #if DEBUG
-    logFile.println(F("seq,date,heure,stationId,batterieFaible,temperatureC,humidite,rayonnementSolaire,indexUV,pluieMmH,compteurPluie,rafaleKph,vitesseVentKph,directionVent,temperatureInterieureC,humiditeInterieure,pressionInterieureHpa,creneauTransmission,tauxReceptionPct,framesRecuesDepuisEcriture,framesRecuesCreneauEnCours"));
+    logFile.println(F("seq,date,heure,stationId,batterieFaible,temperatureC,humidite,rayonnementSolaire,indexUV,pluieMmH,compteurPluie,rafaleKph,vitesseVentKph,directionVent,temperatureInterieureC,humiditeInterieure,pressionInterieureHpa,creneauTransmission,tauxReceptionPct,framesRecuesDepuisEcriture,framesRecuesCreneauEnCours,tramesRateesCreneauEnCours"));
 #else
     logFile.println(F("seq,date,heure,stationId,batterieFaible,temperatureC,humidite,rayonnementSolaire,indexUV,pluieMmH,compteurPluie,rafaleKph,vitesseVentKph,directionVent,temperatureInterieureC,humiditeInterieure,pressionInterieureHpa,creneauTransmission,tauxReceptionPct"));
 #endif
@@ -170,12 +191,14 @@ void DataLogger::getSnapshot(Snapshot &snapshot) const
     snapshot.windSpeedKph = lastWindSpeedKph;
     snapshot.windDirectionDeg = lastWindDirectionDeg;
     snapshot.windGustKph = currentState.windGustKph;
-    strncpy(snapshot.lastMeasurementDate, lastMeasurementDate, sizeof(snapshot.lastMeasurementDate));
-    strncpy(snapshot.lastMeasurementTime, lastMeasurementTime, sizeof(snapshot.lastMeasurementTime));
+    snapshot.pressureValid = currentIndoorState.dataValid;
+    snapshot.pressureHpa = currentIndoorState.pressureIndoor;
+    safeStrCopy(snapshot.lastMeasurementDate, lastMeasurementDate, sizeof(snapshot.lastMeasurementDate));
+    safeStrCopy(snapshot.lastMeasurementTime, lastMeasurementTime, sizeof(snapshot.lastMeasurementTime));
     snapshot.rainActive = rainEpisodeActive;
     snapshot.lastRainEventValid = lastRainEventValid;
-    strncpy(snapshot.lastRainEventDate, lastRainEventDate, sizeof(snapshot.lastRainEventDate));
-    strncpy(snapshot.lastRainEventTime, lastRainEventTime, sizeof(snapshot.lastRainEventTime));
+    safeStrCopy(snapshot.lastRainEventDate, lastRainEventDate, sizeof(snapshot.lastRainEventDate));
+    safeStrCopy(snapshot.lastRainEventTime, lastRainEventTime, sizeof(snapshot.lastRainEventTime));
     snapshot.lastRainEventCumulativeMm = lastRainEventCumulativeMm;
     snapshot.locationValid = lastLocationValid;
     snapshot.latitudeDeg = lastLocationLatitudeDeg;
@@ -240,6 +263,37 @@ void DataLogger::logRecord(const IssData &data)
     }
 
     framesReceivedInSlot = framesReceivedInSlot + 1;
+
+    // Mesure de l'ecart avec la trame precedente (voir DataLogger.h et
+    // Config.h : FRAME_GAP_WARNING_MS) - alimente a la fois le compteur de
+    // trames probablement ratees ET la moyenne "propre" utilisee par
+    // checkReceptionSlotBoundary() pour calibrer le taux de reception sur
+    // le comportement reel de CE materiel, plutot que sur une formule
+    // theorique qui s'est reveleee erronee pour au moins une station.
+    if (frameGapBaselineSet == false)
+    {
+        frameGapBaselineSet = true;
+    }
+    else
+    {
+        unsigned long gapMs = millis() - lastFrameReceivedMillis;
+        if (gapMs > FRAME_GAP_WARNING_MS)
+        {
+            missedFrameGapCount = missedFrameGapCount + 1;
+#if DEBUG
+            Serial.print(F("[DataLogger] Trame recue "));
+            Serial.print(gapMs);
+            Serial.println(F(" ms apres la precedente (> FRAME_GAP_WARNING_MS : au moins une trame probablement ratee)"));
+#endif
+        }
+        else
+        {
+            normalIntervalSumMs = normalIntervalSumMs + (uint32_t)gapMs;
+            normalIntervalCount = normalIntervalCount + 1;
+        }
+    }
+    lastFrameReceivedMillis = millis();
+
 #if DEBUG
     framesReceivedSinceLastWrite = framesReceivedSinceLastWrite + 1;
     // Numero de cette trame DANS le creneau de 5 min en cours (règle
@@ -252,7 +306,7 @@ void DataLogger::logRecord(const IssData &data)
     // qui permet de voir immediatement a l'oeil si la perte se produit en
     // debut de creneau (le "1" tarde a apparaitre / saute directement a un
     // nombre > 1) ou en fin de creneau (le dernier numero avant le prochain
-    // "1" est nettement en dessous de l'attendu, ~120 pour la station 0).
+    // "1" est nettement en dessous de l'attendu).
     Serial.print(F("[DataLogger] Trame #"));
     Serial.print(framesReceivedInSlot);
     Serial.println(F(" du creneau en cours"));
@@ -308,16 +362,26 @@ void DataLogger::logRecord(const IssData &data)
                     rainEpisodeActive = true;
                     rainEpisodeJustStarted = true;
                     rainEpisodeCumulativeMm = 0.0f;
-                    strncpy(rainEpisodeStartDate, dateString, sizeof(rainEpisodeStartDate));
-                    strncpy(rainEpisodeStartTime, timeString, sizeof(rainEpisodeStartTime));
+                    safeStrCopy(rainEpisodeStartDate, dateString, sizeof(rainEpisodeStartDate));
+                    safeStrCopy(rainEpisodeStartTime, timeString, sizeof(rainEpisodeStartTime));
                 }
                 rainEpisodeCumulativeMm = rainEpisodeCumulativeMm + ((float)tipDelta * RAIN_MM_PER_TIP);
                 lastRainTipMillis = millis();
 
                 lastRainEventValid = true;
-                strncpy(lastRainEventDate, dateString, sizeof(lastRainEventDate));
-                strncpy(lastRainEventTime, timeString, sizeof(lastRainEventTime));
+                safeStrCopy(lastRainEventDate, dateString, sizeof(lastRainEventDate));
+                safeStrCopy(lastRainEventTime, timeString, sizeof(lastRainEventTime));
                 lastRainEventCumulativeMm = rainEpisodeCumulativeMm;
+
+                // Cumul journalier (voir DataLogger.h) : remis a zero au
+                // premier clic d'un nouveau jour, sinon simplement
+                // incremente comme le cumul d'episode ci-dessus.
+                if (strncmp(dailyRainDateReference, dateString, sizeof(dailyRainDateReference)) != 0)
+                {
+                    dailyRainCumulativeMm = 0.0f;
+                    safeStrCopy(dailyRainDateReference, dateString, sizeof(dailyRainDateReference));
+                }
+                dailyRainCumulativeMm = dailyRainCumulativeMm + ((float)tipDelta * RAIN_MM_PER_TIP);
             }
             break;
         }
@@ -369,7 +433,37 @@ bool DataLogger::checkReceptionSlotBoundary(const char timeString[7], uint8_t st
         return false;
     }
 
-    float expectedFrames = ((float)TRANSMISSION_SLOT_MINUTES * 60.0f) / issSecondsPerPacket(stationId);
+    // Base du calcul : intervalle moyen REELLEMENT mesure sur ce creneau
+    // (voir logRecord()), pas la formule theorique Davis
+    // (issSecondsPerPacket()) - celle-ci s'est reveleee ne pas correspondre
+    // au comportement reel observe sur au moins une station (mesure ~2,56s/
+    // trame contre 2,5s theoriques pour stationId=0), rendant le taux
+    // systematiquement legerement sous-estime independamment de toute
+    // perte reelle. La moyenne "propre" (normalIntervalSumMs/Count)
+    // exclut deliberement les ecarts > FRAME_GAP_WARNING_MS (missedFrameGapCount) :
+    // sans cette exclusion, une vraie perte se "diluerait" dans la moyenne
+    // et masquerait sa propre trace au lieu de faire baisser le taux.
+    float measuredAverageIntervalMs;
+    if (normalIntervalCount > 0)
+    {
+        measuredAverageIntervalMs = (float)normalIntervalSumMs / (float)normalIntervalCount;
+        params.setIssAverageFrameIntervalMs((uint32_t)(measuredAverageIntervalMs + 0.5f));
+    }
+    else
+    {
+        // Aucune mesure "propre" sur ce creneau (tout premier creneau
+        // apres demarrage a froid, ou creneau entierement en echec) :
+        // repli sur la derniere valeur mesuree connue (persistee, voir
+        // Params - utile des le redemarrage si elle a ete sauvegardee via
+        // SAVE), et a defaut seulement sur la formule theorique.
+        measuredAverageIntervalMs = (float)params.getIssAverageFrameIntervalMs();
+        if (measuredAverageIntervalMs <= 0.0f)
+        {
+            measuredAverageIntervalMs = issSecondsPerPacket(stationId) * 1000.0f;
+        }
+    }
+
+    float expectedFrames = ((float)TRANSMISSION_SLOT_MINUTES * 60.0f * 1000.0f) / measuredAverageIntervalMs;
     float receptionPercentFloat = 0.0f;
     if (expectedFrames > 0.0f)
     {
@@ -386,9 +480,16 @@ bool DataLogger::checkReceptionSlotBoundary(const char timeString[7], uint8_t st
 
     Serial.print(F("[DataLogger] Taux de reception sur le creneau ecoule : "));
     Serial.print(lastReceptionPercent);
-    Serial.println(F(" %"));
+    Serial.print(F(" % (intervalle moyen mesure : "));
+    Serial.print(measuredAverageIntervalMs);
+    Serial.print(F(" ms, trames probablement ratees : "));
+    Serial.print(missedFrameGapCount);
+    Serial.println(F(")"));
 
     framesReceivedInSlot = 0;
+    missedFrameGapCount = 0;
+    normalIntervalSumMs = 0;
+    normalIntervalCount = 0;
     lastTransmissionSlotIndex = currentSlotIndex;
     transmissionSlotInitialized = true;
 
@@ -433,8 +534,8 @@ void DataLogger::writeLine(const char dateString[9], const char timeString[7], b
     }
 
     // Voir DataLogger.h : photo de la derniere synthese, pour BleLink.
-    strncpy(lastMeasurementDate, dateString, sizeof(lastMeasurementDate));
-    strncpy(lastMeasurementTime, timeString, sizeof(lastMeasurementTime));
+    safeStrCopy(lastMeasurementDate, dateString, sizeof(lastMeasurementDate));
+    safeStrCopy(lastMeasurementTime, timeString, sizeof(lastMeasurementTime));
     lastWindSpeedKph = windSpeedAverageKph;
     lastWindDirectionDeg = windDirectionDegForSnapshot;
 
@@ -498,7 +599,7 @@ void DataLogger::writeLine(const char dateString[9], const char timeString[7], b
 #if DEBUG
     // Voir Remarque 4, DataLogger.h : uniquement pour verification du
     // comptage de reception, jamais en production.
-    snprintf(line, sizeof(line), "%lu,%s,%s,%u,%u,%.1f,%.1f,%u,%.1f,%.1f,%u,%u,%u,%s,%s,%s,%s,%u,%s,%u,%u",
+    snprintf(line, sizeof(line), "%lu,%s,%s,%u,%u,%.1f,%.1f,%u,%.1f,%.1f,%u,%u,%u,%s,%s,%s,%s,%u,%s,%u,%u,%u",
              sequenceNumber, dateString, timeString,
              currentState.stationId, currentState.batteryLow,
              currentState.temperatureOutside, currentState.humidityOutside,
@@ -507,7 +608,7 @@ void DataLogger::writeLine(const char dateString[9], const char timeString[7], b
              currentState.windGustKph, windSpeedAverageKph, windDirectionField,
              indoorTemperatureField, indoorHumidityField, indoorPressureField,
              transmissionSlotFlag, receptionField,
-             framesReceivedSinceLastWrite, framesReceivedInSlot);
+             framesReceivedSinceLastWrite, framesReceivedInSlot, missedFrameGapCount);
 #else
     snprintf(line, sizeof(line), "%lu,%s,%s,%u,%u,%.1f,%.1f,%u,%.1f,%.1f,%u,%u,%u,%s,%s,%s,%s,%u,%s",
              sequenceNumber, dateString, timeString,
@@ -572,6 +673,7 @@ void DataLogger::writeLine(const char dateString[9], const char timeString[7], b
         meshSendWindSpeedKph = (float)windSpeedAverageKph;
         meshSendWindGustKph = (float)currentState.windGustKph;
         meshSendRainfallMm = (rainEpisodeActive == true) ? rainEpisodeCumulativeMm : 0.0f;
+        meshSendRainfall24hMm = dailyRainCumulativeMm;
     }
 #endif
 
@@ -612,7 +714,7 @@ void DataLogger::update()
             meshLinkSendEnvironmentTelemetry(utcUnixTime,
                                               meshSendTemperatureC, meshSendHumidityPercent, meshSendPressureHpa,
                                               meshSendWindDirectionDeg, meshSendWindSpeedKph, meshSendWindGustKph,
-                                              meshSendRainfallMm);
+                                              meshSendRainfallMm, meshSendRainfall24hMm);
         }
     }
 #endif
