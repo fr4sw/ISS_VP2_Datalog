@@ -27,10 +27,16 @@
 static const uint8_t MESHTASTIC_FRAME_START1 = 0x94;
 static const uint8_t MESHTASTIC_FRAME_START2 = 0xC3;
 
-// Valeur arbitraire non nulle pour want_config_id (voir MeshtasticTelemetry.h) :
-// non exploitee en retour dans ce premier jet, juste non nulle comme l'exige
-// le protocole.
-static const uint32_t MESH_WANT_CONFIG_NONCE = 1;
+// Valeur de want_config_id : 69420 est la valeur "canonique" utilisee par
+// les clients officiels Meshtastic (Android/iOS/Python) pour cette
+// poignee de main - PAS une simple valeur arbitraire non nulle comme
+// suppose a tort dans un premier jet (bug releve par l'utilisateur, avec
+// verification independante sur un vrai T114). N'importe quelle valeur
+// non nulle EST valide cote protocole strict, mais s'aligner sur celle
+// des clients officiels reduit le risque de tomber sur un comportement
+// firmware qui ferait implicitement une hypothese dessus (non verifie
+// dans les sources, mais mieux vaut ne pas se distinguer sans raison).
+static const uint32_t MESH_WANT_CONFIG_NONCE = 69420;
 
 // Machine a etats minimale pour l'attente d'accuse de reception (voir
 // MeshLink.h : meshLinkUpdate()). Pas d'enum dediee pour un simple booleen -
@@ -153,6 +159,7 @@ bool meshLinkSendEnvironmentTelemetry(uint32_t utcUnixTime,
         // toujours inferieur au creneau de transmission (5 min, voir
         // Config.h), ce cas devrait rester rare en pratique.
         Serial.println(F("[MeshLink] Envoi precedent encore en attente de reponse : nouvel envoi differe"));
+        if (Serial) { Serial.flush(); }   // jamais de flush() sans hote connecte (voir DataLogger.cpp, premiere occurrence)
         return false;
     }
 
@@ -160,6 +167,7 @@ bool meshLinkSendEnvironmentTelemetry(uint32_t utcUnixTime,
     if (busAcquired == false)
     {
         Serial.println(F("[MeshLink] Bus partage occupe (GPS) : envoi differe au prochain creneau"));
+        if (Serial) { Serial.flush(); }   // jamais de flush() sans hote connecte (voir DataLogger.cpp, premiere occurrence)
         return false;
     }
 
@@ -178,6 +186,7 @@ bool meshLinkSendEnvironmentTelemetry(uint32_t utcUnixTime,
     if (built == false)
     {
         Serial.println(F("[MeshLink] Erreur : message de telemetrie trop volumineux pour le tampon"));
+        if (Serial) { Serial.flush(); }   // jamais de flush() sans hote connecte (voir DataLogger.cpp, premiere occurrence)
         logEvent(F("Erreur : message Meshtastic trop volumineux"));
         meshShutdown();
         return false;
@@ -185,6 +194,7 @@ bool meshLinkSendEnvironmentTelemetry(uint32_t utcUnixTime,
 
     sendFramedToRadio(telemetryBuffer, telemetryLength);
     Serial.println(F("[MeshLink] Telemetrie ecrite sur l'UART, attente d'une reponse du T114..."));
+    if (Serial) { Serial.flush(); }   // jamais de flush() sans hote connecte (voir DataLogger.cpp, premiere occurrence)
     logEvent(F("Telemetrie ecrite vers Meshtastic, attente reponse"));
 
     // Alimentation VOLONTAIREMENT maintenue (voir MeshLink.h) : ecrire les
@@ -224,6 +234,7 @@ void meshLinkUpdate()
         }
 #endif
         Serial.println(F("[MeshLink] Reponse recue du T114 : coupure de l'alimentation Mesh"));
+        if (Serial) { Serial.flush(); }   // jamais de flush() sans hote connecte (voir DataLogger.cpp, premiere occurrence)
         logEvent(F("Reponse Meshtastic recue"));
         meshShutdown();
         return;
@@ -233,6 +244,7 @@ void meshLinkUpdate()
     if (ackWaitElapsed >= MESH_ACK_TIMEOUT_MS)
     {
         Serial.println(F("[MeshLink] Timeout sans reponse du T114 : coupure de l'alimentation Mesh"));
+        if (Serial) { Serial.flush(); }   // jamais de flush() sans hote connecte (voir DataLogger.cpp, premiere occurrence)
         logEvent(F("Timeout reponse Meshtastic"));
         meshShutdown();
     }

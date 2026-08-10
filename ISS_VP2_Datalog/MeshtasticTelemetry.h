@@ -37,6 +37,17 @@
 #define TORADIO_FIELD_WANT_CONFIG_ID   3   // uint32, demarre la "poignee de main"
 
 // --- meshtastic/mesh.proto : message MeshPacket ---
+// --- meshtastic/mesh.proto : message MeshPacket ---
+// ATTENTION : le champ FROM (1) etait absent d'un premier jet de ce code -
+// bug releve par l'utilisateur (verification independante sur un vrai
+// T114) : sans lui, le firmware ne peut pas attribuer/router le paquet et
+// ne l'emet tout simplement jamais sur le reseau radio. TOUJOURS l'ecrire,
+// meme a 0 (voir meshBuildEnvironmentTelemetryToRadio() : c'est la
+// convention des clients officiels - la valeur reelle du nœud est
+// substituee par le firmware lui-meme a la reception depuis le port
+// serie local, le client n'a pas besoin de connaitre son propre node ID).
+#define MESHPACKET_FIELD_FROM       1   // fixed32, 0 = laisse le firmware substituer
+                                         // le node ID reel du port serie local
 #define MESHPACKET_FIELD_TO         2   // fixed32, destinataire (broadcast ci-dessous)
 #define MESHPACKET_FIELD_CHANNEL    3   // uint32, index de canal (0 = canal principal)
 #define MESHPACKET_FIELD_DECODED    4   // Data en clair (vs "encrypted", non utilise ici)

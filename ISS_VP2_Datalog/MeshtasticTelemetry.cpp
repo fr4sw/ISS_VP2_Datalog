@@ -43,6 +43,13 @@ bool meshBuildEnvironmentTelemetryToRadio(uint8_t *outputBuffer, size_t outputCa
     uint8_t meshPacketBuffer[100];
     ProtobufWriter meshPacketWriter;
     meshPacketWriter.begin(meshPacketBuffer, sizeof(meshPacketBuffer));
+    // FROM (voir MeshtasticTelemetry.h) : sans ce champ, le firmware ne
+    // peut pas attribuer/router le paquet et ne l'emet jamais sur le
+    // reseau radio - bug confirme par l'utilisateur sur un vrai T114.
+    // Ecrit explicitement a 0 (jamais omis, voir ProtobufWriter::
+    // writeFixed32Field() : pas d'optimisation "valeur par defaut proto3"
+    // dans cette implementation - le champ apparait bien sur le fil).
+    meshPacketWriter.writeFixed32Field(MESHPACKET_FIELD_FROM, 0);
     meshPacketWriter.writeFixed32Field(MESHPACKET_FIELD_TO, MESHTASTIC_BROADCAST_ADDR);
     meshPacketWriter.writeVarintField(MESHPACKET_FIELD_CHANNEL, 0);
     meshPacketWriter.writeBytesField(MESHPACKET_FIELD_DECODED, dataWriter.data(), dataWriter.length());

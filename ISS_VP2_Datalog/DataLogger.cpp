@@ -303,6 +303,26 @@ void DataLogger::logRecord(const IssData &data)
 #if DEBUG
     framesReceivedSinceLastWrite = framesReceivedSinceLastWrite + 1;
     printDecodedValue(data);
+    // Serial.flush() attend que l'hote USB ait effectivement lu le tampon
+    // CDC avant de continuer (voir ISS_VP2_Datalog.ino : meme raisonnement
+    // pour printRawFrame()) - sans cela, en DEBUG, le volume de lignes
+    // imprimees par trame (ici + le dump brut cote .ino) peut deborder le
+    // tampon interne TinyUSB et perdre silencieusement le DEBUT de
+    // certaines lignes (observe : "[Main] Trame brute #30" devenu juste
+    // "#30", ou pire tronque encore plus loin). Cout uniquement en DEBUG
+    // (compile hors en production, règle 26) : bref si un moniteur serie
+    // est bien ouvert et lit activement (cas normal en session de debug).
+    // ATTENTION : sur un port USB natif (TinyUSB, pas un UART), si AUCUN
+    // hote n'est connecte (station de terrain sans PC branche), rien ne
+    // vide jamais ce tampon - un flush() inconditionnel bloquerait alors
+    // indefiniment toute la boucle (bien pire que la troncature qu'il
+    // corrige). `if (Serial)` reflete l'etat DTR : vrai uniquement si un
+    // moniteur serie est reellement ouvert, faux (sans le moindre
+    // blocage) dans tous les autres cas - exactement le seul moment ou ce
+    // flush() sert a quelque chose de toute facon. Meme garde reprise
+    // partout ailleurs ou un flush() a ete ajoute (ISS_VP2_Datalog.ino,
+    // MeshLink.cpp).
+    if (Serial) { Serial.flush(); }   // jamais de flush() sans hote connecte (voir DataLogger.cpp, premiere occurrence)
 #endif
 
     // Un clic de pluie (changement du compteur, pas seulement une
@@ -487,6 +507,13 @@ bool DataLogger::checkReceptionSlotBoundary(const char timeString[7], uint8_t st
     Serial.print(F(" ms, trames probablement ratees : "));
     Serial.print(missedFrameGapCount);
     Serial.println(F(")"));
+    // Pas de #if DEBUG ici (ce message est toujours actif) : voir
+    // ISS_VP2_Datalog.ino/printRawFrame() pour le raisonnement complet -
+    // ce message tombe justement dans la rafale de fin de creneau (taux
+    // de reception + ligne CSV + premiere trame du nouveau creneau, tout
+    // dans la meme fraction de seconde), le point le plus a risque de
+    // perte cote tampon CDC-USB.
+    if (Serial) { Serial.flush(); }   // jamais de flush() sans hote connecte (voir DataLogger.cpp, premiere occurrence)
 
     framesReceivedInSlot = 0;
     missedFrameGapCount = 0;
@@ -654,6 +681,10 @@ void DataLogger::writeLine(const char dateString[9], const char timeString[7], b
 #endif
 
     Serial.println(line);
+    // Voir checkReceptionSlotBoundary() : meme rafale de fin de creneau,
+    // meme raisonnement (protection contre la perte d'octets cote tampon
+    // CDC-USB).
+    if (Serial) { Serial.flush(); }   // jamais de flush() sans hote connecte (voir DataLogger.cpp, premiere occurrence)
 
 #if DEBUG
     framesReceivedSinceLastWrite = 0;
@@ -714,10 +745,16 @@ void DataLogger::update()
         if (utcAvailable == false)
         {
             Serial.println(F("[DataLogger] Envoi Mesh annule : pas de source UTC disponible (voir TimeManager)"));
+            if (Serial) { Serial.flush(); }   // jamais de flush() sans hote connecte (voir DataLogger.cpp, premiere occurrence)
         }
         else
         {
+            // Voir checkReceptionSlotBoundary()/writeLine() : ce message
+            // tombe dans la meme rafale de fin de creneau qui a deja
+            // provoque une troncature observee ("... du creneau qui vient
+            // de se refermer" devenu juste "se refermer").
             Serial.println(F("[DataLogger] Envoi de la telemetrie Mesh du creneau qui vient de se refermer"));
+            if (Serial) { Serial.flush(); }   // jamais de flush() sans hote connecte (voir DataLogger.cpp, premiere occurrence)
             meshLinkSendEnvironmentTelemetry(utcUnixTime,
                                               meshSendTemperatureC, meshSendHumidityPercent, meshSendPressureHpa,
                                               meshSendWindDirectionDeg, meshSendWindSpeedKph, meshSendWindGustKph,

@@ -109,6 +109,11 @@ static void printRawFrame(const char prefix[], const IssRawFrame &rawFrame)
         Serial.print(F(" "));
     }
     Serial.println();
+    // Voir DataLogger.cpp (meme raisonnement) : sans ce flush(), le volume
+    // de lignes DEBUG par trame peut deborder le tampon CDC-USB et perdre
+    // silencieusement le debut de certaines lignes (bug releve : "[Main]
+    // Trame brute #30 : ..." devenu juste "#30 : ...").
+    if (Serial) { Serial.flush(); }   // jamais de flush() sans hote connecte (voir DataLogger.cpp, premiere occurrence)
 }
 #endif
 
