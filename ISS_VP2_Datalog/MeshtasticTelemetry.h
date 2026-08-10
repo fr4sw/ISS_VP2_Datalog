@@ -36,30 +36,7 @@
 #define TORADIO_FIELD_PACKET           1   // MeshPacket a emettre sur le mesh
 #define TORADIO_FIELD_WANT_CONFIG_ID   3   // uint32, demarre la "poignee de main"
 
-// Valeurs SPECIALES de want_config_id (donc de FromRadio.config_complete_id
-// en retour, qui l'echo tel quel) - decouvertes par analyse d'un echange
-// reel sur T114 (confirmees par l'utilisateur, PAS documentees dans les
-// commentaires des .proto officiels a notre connaissance) : le firmware
-// bifurque son comportement selon la valeur exacte envoyee, ce n'est PAS
-// un simple jeton opaque comme suppose a tort dans un premier jet.
-//   SPECIAL_NONCE_ONLY_CONFIG (69420) -> renvoie la config (device/module/
-//     canaux) SANS la base de nœuds (NodeInfo*N) - plus rapide, c'est ce
-//     qu'on veut ici (on n'exploite pas la NodeDB).
-//   SPECIAL_NONCE_ONLY_DB (69421) -> l'inverse : NodeDB SEULEMENT, sans la
-//     config.
-//   Toute AUTRE valeur -> comportement non caracterise ici (vraisemblablement
-//     config + NodeDB completes, plus lent) - a eviter sans raison precise.
-#define MESHTASTIC_SPECIAL_NONCE_ONLY_CONFIG   69420UL
-#define MESHTASTIC_SPECIAL_NONCE_ONLY_DB       69421UL
-
-// --- meshtastic/mesh.proto : message FromRadio (radio -> client) ---
-// Seul le champ dont ce projet a l'usage reel est liste ici (règle 15) -
-// voir MeshLink.cpp : c'est LA fin de la poignee de main a detecter (pas
-// un delai fixe arbitraire comme dans un premier jet) : FromRadio.
-// config_complete_id echo la valeur de want_config_id envoyee (voir
-// ci-dessus) une fois la sequence de config terminee.
-#define FROMRADIO_FIELD_CONFIG_COMPLETE_ID   7   // uint32, echo de want_config_id
-
+// --- meshtastic/mesh.proto : message MeshPacket ---
 // --- meshtastic/mesh.proto : message MeshPacket ---
 // ATTENTION : le champ FROM (1) etait absent d'un premier jet de ce code -
 // bug releve par l'utilisateur (verification independante sur un vrai
