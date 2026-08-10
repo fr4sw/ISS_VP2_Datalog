@@ -8,7 +8,7 @@ bool meshBuildEnvironmentTelemetryToRadio(uint8_t *outputBuffer, size_t outputCa
                                            uint32_t utcUnixTime,
                                            float temperatureC, float relativeHumidityPercent, float pressureHpa,
                                            uint16_t windDirectionDeg, float windSpeedKph, float windGustKph,
-                                           float rainfall1hMm)
+                                           float rainfall1hMm, float rainfall24hMm)
 {
     // Construction "de l'interieur vers l'exterieur" : chaque message
     // imbrique est d'abord serialise dans son propre petit tampon, puis
@@ -26,6 +26,7 @@ bool meshBuildEnvironmentTelemetryToRadio(uint8_t *outputBuffer, size_t outputCa
     environmentMetricsWriter.writeFloatField(ENV_FIELD_WIND_SPEED, windSpeedKph * KPH_TO_MPS);
     environmentMetricsWriter.writeFloatField(ENV_FIELD_WIND_GUST, windGustKph * KPH_TO_MPS);
     environmentMetricsWriter.writeFloatField(ENV_FIELD_RAINFALL_1H, rainfall1hMm);
+    environmentMetricsWriter.writeFloatField(ENV_FIELD_RAINFALL_24H, rainfall24hMm);
 
     uint8_t telemetryBuffer[64];
     ProtobufWriter telemetryWriter;
@@ -42,6 +43,13 @@ bool meshBuildEnvironmentTelemetryToRadio(uint8_t *outputBuffer, size_t outputCa
     uint8_t meshPacketBuffer[100];
     ProtobufWriter meshPacketWriter;
     meshPacketWriter.begin(meshPacketBuffer, sizeof(meshPacketBuffer));
+    // FROM (voir MeshtasticTelemetry.h) : sans ce champ, le firmware ne
+    // peut pas attribuer/router le paquet et ne l'emet jamais sur le
+    // reseau radio - bug confirme par l'utilisateur sur un vrai T114.
+    // Ecrit explicitement a 0 (jamais omis, voir ProtobufWriter::
+    // writeFixed32Field() : pas d'optimisation "valeur par defaut proto3"
+    // dans cette implementation - le champ apparait bien sur le fil).
+    meshPacketWriter.writeFixed32Field(MESHPACKET_FIELD_FROM, 0);
     meshPacketWriter.writeFixed32Field(MESHPACKET_FIELD_TO, MESHTASTIC_BROADCAST_ADDR);
     meshPacketWriter.writeVarintField(MESHPACKET_FIELD_CHANNEL, 0);
     meshPacketWriter.writeBytesField(MESHPACKET_FIELD_DECODED, dataWriter.data(), dataWriter.length());

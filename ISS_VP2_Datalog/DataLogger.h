@@ -68,6 +68,9 @@ public:
         uint8_t  windSpeedKph;
         int16_t  windDirectionDeg;      // -1 = NA
         uint8_t  windGustKph;
+        bool     pressureValid;         // false si le BME680 interieur n'a jamais renvoye de mesure
+        float    pressureHpa;           // pression INTERIEURE (BME680) - l'ISS Davis n'a pas de
+                                         // barometre exterieur, voir DataLogger::writeLine()
         char     lastMeasurementDate[9];
         char     lastMeasurementTime[7];
         bool     rainActive;            // true = episode de pluie en cours
@@ -85,6 +88,14 @@ public:
     void logRecord(const IssData &data);
     void updateIndoorData(const IndoorData &data);
     void getSnapshot(Snapshot &snapshot) const;
+
+    // Numero (1..N) attribue a la DERNIERE trame traitee par logRecord()
+    // dans le creneau de 5 min en cours - voir ISS_VP2_Datalog.ino, qui
+    // l'utilise pour prefixer le dump de la trame brute correspondante
+    // ("[Main] Trame brute #N : ..."), sans dupliquer une ligne de log
+    // separee cote DataLogger. Valeur non significative avant la toute
+    // premiere trame recue (0).
+    uint16_t getLastFrameNumberInSlot() const;
 
 private:
     void printDecodedValue(const IssData &data);
@@ -139,12 +150,41 @@ private:
     char          lastRainEventTime[7];
     float         lastRainEventCumulativeMm;
 
+    // Cumul "depuis minuit" (approximation pragmatique d'un vrai cumul
+    // glissant sur 24h, non implemente - voir MeshtasticTelemetry.h,
+    // ENV_FIELD_RAINFALL_24H) : remis a zero des que dateString change de
+    // jour. Independant du systeme d'episode ci-dessus (un episode peut
+    // chevaucher minuit, le cumul journalier redemarre quand meme a zero).
+    char          dailyRainDateReference[9];
+    float         dailyRainCumulativeMm;
+
     // Taux de reception, calcule sur le creneau TRANSMISSION_SLOT_MINUTES
     // (cale sur l'horloge murale, pas sur un simple compte a rebours).
     bool     transmissionSlotInitialized;
     int16_t  lastTransmissionSlotIndex;
     uint16_t framesReceivedInSlot;
     uint8_t  lastReceptionPercent;
+    // Total REEL de trames du dernier creneau ferme (voir
+    // checkReceptionSlotBoundary()) - a NE PAS confondre avec
+    // framesReceivedInSlot ci-dessus, qui refletera juste apres le compte
+    // du NOUVEAU creneau en cours d'accumulation (voir DEBUG CSV : colonne
+    // framesRecuesCreneauEnCours). C'est CE membre-ci qui donne le total
+    // final exploitable pour une verification a froid (relecture du CSV).
+    uint16_t lastClosedSlotFrameCount;
+
+    // Mesure empirique de l'intervalle entre trames (voir Params::
+    // getIssAverageFrameIntervalMs()) : remplace desormais la formule
+    // theorique (issSecondsPerPacket()) comme base du calcul ci-dessus,
+    // qui s'est averee ne pas correspondre au comportement reel observe.
+    // PAS reserve au DEBUG (contrairement a framesReceivedSinceLastWrite
+    // plus bas) : utilise pour le calcul de production, pas seulement du
+    // diagnostic. Accumulateurs remis a zero a chaque creneau de 5 min,
+    // comme framesReceivedInSlot.
+    bool          frameGapBaselineSet;
+    unsigned long lastFrameReceivedMillis;
+    uint16_t      missedFrameGapCount;   // ecarts > FRAME_GAP_WARNING_MS (probable perte)
+    uint32_t      normalIntervalSumMs;   // somme des ecarts <= FRAME_GAP_WARNING_MS
+    uint16_t      normalIntervalCount;
 
 #if USE_MESHTASTIC
     // Envoi de la telemetrie Mesh a chaque creneau de 5 min (meme
@@ -164,6 +204,7 @@ private:
     float         meshSendWindSpeedKph;
     float         meshSendWindGustKph;
     float         meshSendRainfallMm;
+    float         meshSendRainfall24hMm;
 #endif
 
 #if DEBUG

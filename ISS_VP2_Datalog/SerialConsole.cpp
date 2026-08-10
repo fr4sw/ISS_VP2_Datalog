@@ -22,6 +22,8 @@ static void printHelp()
     Serial.println(F("  SET GPSMINSAT <n>     - satellites min. pour accepter un point GPS (4 ~50m, 8 ~5m)"));
     Serial.println(F("  SET DATALOGGERUTC <0|1> - 1 = horodatage CSV/EVENTS.LOG en UTC, 0 = heure locale"));
     Serial.println(F("  SET MESHUTC <0|1>     - 1 = horodatage transmis sur le mesh en UTC, 0 = heure locale"));
+    Serial.println(F("  SET ISSAVGINTERVALMS <ms> - intervalle moyen mesure entre trames ISS (calibrage manuel/forcage)"));
+    Serial.println(F("  SET BLEENABLED <0|1>  - 1 = annonce BLE active au demarrage, 0 = desactivee (necessite redemarrage)"));
     Serial.println(F("  SAVE                  - enregistre les parametres sur la carte SD"));
 }
 
@@ -40,7 +42,11 @@ static void printCurrentValues()
     Serial.print(F("  DATALOGGERUTC="));
     Serial.print(params.getDataloggerUtc());
     Serial.print(F("  MESHUTC="));
-    Serial.println(params.getMeshUtc());
+    Serial.print(params.getMeshUtc());
+    Serial.print(F("  ISSAVGINTERVALMS="));
+    Serial.print(params.getIssAverageFrameIntervalMs());
+    Serial.print(F("  BLEENABLED="));
+    Serial.println(params.getBleEnabled());
 }
 
 // Traite une commande "SET <CLE> <VALEUR>" deja separee de son mot-clef
@@ -91,6 +97,16 @@ static void handleSetCommand(char arguments[])
     {
         params.setMeshUtc(value != 0);
         Serial.println(F("[Console] MESHUTC mis a jour (SAVE pour rendre le reglage permanent)"));
+    }
+    else if (strcmp(key, "ISSAVGINTERVALMS") == 0)
+    {
+        params.setIssAverageFrameIntervalMs((uint32_t)value);
+        Serial.println(F("[Console] ISSAVGINTERVALMS mis a jour (SAVE pour rendre le reglage permanent)"));
+    }
+    else if (strcmp(key, "BLEENABLED") == 0)
+    {
+        params.setBleEnabled(value != 0);
+        Serial.println(F("[Console] BLEENABLED mis a jour (SAVE, puis redemarrage necessaire pour prendre effet)"));
     }
     else
     {

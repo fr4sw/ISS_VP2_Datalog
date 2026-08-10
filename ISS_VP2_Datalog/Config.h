@@ -122,15 +122,52 @@
 // Delai (bloquant, voir MeshLink.cpp) laisse au T114 pour cesser d'emettre
 // du texte de debug apres la poignee de main, avant de lui envoyer la
 // telemetrie.
-#define MESH_HANDSHAKE_SETTLE_MS    250UL
-// Duree max pendant laquelle l'alimentation Mesh est maintenue APRES
-// l'envoi, en attendant une reponse du module T114 (voir MeshLink.cpp :
-// meshLinkUpdate()). Ecrire les octets sur l'UART ne signifie pas que le
-// module a fini de les emettre sur le reseau radio - couper l'alimentation
-// immediatement apres l'ecriture ne lui en laisse pas le temps. Non
-// bloquant (verifie a chaque loop(), pas d'attente active) : n'empeche PAS
-// la reception RS485 pendant ce delai.
-#define MESH_ACK_TIMEOUT_MS         180000UL   // ms (3 min)
+// Attente MAXIMALE du vrai signal de fin de poignee de main
+// (FromRadio.config_complete_id, voir MeshLink.cpp/MeshtasticTelemetry.h) -
+// remplace l'ancien MESH_HANDSHAKE_SETTLE_MS (250ms fixes, sans rien
+// verifier) suite a l'analyse d'un echange reel sur T114 : le firmware
+// peut envoyer plusieurs trames intermediaires (Config, NodeInfo, ...)
+// avant le signal de fin, generalement en quelques centaines de ms avec
+// MESHTASTIC_SPECIAL_NONCE_ONLY_CONFIG (pas de NodeDB a transferer) - cette
+// valeur est une marge de securite, pas un delai "normal" attendu.
+#define MESH_HANDSHAKE_MAX_WAIT_MS   2000UL   // ms (2 s)
+
+// Taille max d'une trame FromRadio individuelle que l'on peut lire pendant
+// la poignee de main (voir MeshLink.cpp : readOneFrameBlocking()). Une
+// trame de configuration reelle observee faisait 136 octets de charge
+// utile - marge confortable au-dessus. Une trame plus grande que cela est
+// simplement videe et ignoree (pas de depassement de tampon, voir
+// readOneFrameBlocking()), au prix de ne pas pouvoir l'interpreter - sans
+// consequence pour le seul champ qui nous interesse ici (config_complete_id
+// est un varint, toujours minuscule).
+#define MESH_FRAME_PAYLOAD_MAX_LEN   200
+// Duree pendant laquelle l'alimentation Mesh est maintenue APRES l'envoi
+// d'un paquet de telemetrie, avant de couper - voir MeshLink.cpp :
+// meshLinkUpdate(). Non bloquant (verifie a chaque loop(), pas d'attente
+// active) : n'empeche PAS la reception RS485 pendant ce delai.
+//
+// IMPORTANT (revu apres analyse d'echanges reels sur materiel, voir
+// MeshLink.cpp) : ce n'est PAS un timeout d'attente d'accuse de reception.
+// Un paquet envoye en broadcast ne PEUT PAS demander d'accuse de reception
+// au sens Meshtastic (confirme aupres de la communaute) - MESHPACKET_FIELD_WANT_ACK
+// n'est d'ailleurs jamais ecrit dans ce projet (voir MeshtasticTelemetry.cpp).
+// Un premier jet coupait l'alimentation des le premier octet recu en
+// reponse, en supposant a tort qu'il s'agissait d'un accuse de reception
+// specifique a NOTRE paquet - analyse d'un echange reel : l'octet recu
+// etait en realite un fragment du flux FromRadio.config, simple suite du
+// dialogue de configuration deja en cours, sans aucun rapport avec notre
+// envoi. Coupure mesuree a ~47ms apres l'ecriture - bien trop rapide pour
+// une emission LoRa reelle (SF7 : dizaines de ms rien que pour l'air-time,
+// SF12 : plusieurs secondes), meme sans compter le temps de mise en file
+// d'attente cote firmware.
+// Cette duree est donc une marge FORFAITAIRE avant coupure, pas une
+// attente d'evenement precis - generuse pour couvrir le pire cas realiste
+// (SF12 + file d'attente chargee). A affiner plus tard en analysant
+// specifiquement FromRadio.queueStatus (champ 10, contient l'ID du paquet
+// dequeue) pour une confirmation fiable et plus rapide - non implemente
+// dans ce premier jet (règle 26 : pas de complexite avant validation
+// fonctionnelle de base).
+#define MESH_TX_HOLD_MS              5000UL   // ms (5 s)
 
 // --- Creneau de "transmission" (règle Davis/WeeWx/Weatherlink) ---
 // Contrairement a l'ecriture SD (LOG_WRITE_INTERVAL_MS_DEFAULT, plus
@@ -143,6 +180,19 @@
 // ce creneau : voir DataLogger.h remarque 2 pour le point d'integration
 // prevu (colonne creneauTransmission).
 #define TRANSMISSION_SLOT_MINUTES   5
+
+// Delai entre 2 trames ISS au-dela duquel on considere qu'au moins une
+// trame a probablement ete ratee entre les deux (voir DataLogger.cpp :
+// compteur missedFrameGapCount, DEBUG uniquement). Marge confortable par
+// rapport a l'intervalle theorique Davis (~2,5 a 2,56s selon la station,
+// voir issSecondsPerPacket()) : un ecart franc, pas un simple jitter.
+#define FRAME_GAP_WARNING_MS            3000UL
+
+// --- BLE (USE_BLE) - voir BleLink.h ---
+#define BLE_DEVICE_NAME          "ISS-VP2-Datalog"   // nom affiche par les applis de scan BLE
+#define BLE_UPDATE_INTERVAL_MS   5000UL   // frequence de rafraichissement des caracteristiques
+#define BLE_TX_POWER_DBM         4        // puissance d'emission (dBm), valeurs typiques nRF52 :
+                                           // -20/-16/-12/-8/-4/0/4/8
 
 // Court delai apres la fermeture du creneau de 5 min avant l'envoi de la
 // telemetrie Mesh : laisse le temps a une derniere trame ISS en cours de
@@ -182,7 +232,7 @@
 #define DEBUG_RAW_FRAMES   1   // 1 = affiche chaque trame brute recue en
                                 // hexadecimal avant decodage, 0 = production
 
-#define DEBUG_GPS          0   // 1 = affiche uniquement l'heure UTC et le
+#define DEBUG_GPS          1   // 1 = affiche uniquement l'heure UTC et le
                                 // nombre de satellites decodes par le GPS
                                 // (le flux NMEA complet est trop volumineux
                                 // pour DEBUG_RAW_FRAMES), 0 = production

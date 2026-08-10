@@ -90,6 +90,33 @@ public:
     bool     getMeshUtc() const;
     void     setMeshUtc(bool useUtc);
 
+    // Intervalle moyen mesure entre deux trames ISS consecutives (ms),
+    // recalcule empiriquement a chaque creneau de 5 min (voir
+    // DataLogger::checkReceptionSlotBoundary()) : remplace la formule
+    // theorique Davis (issSecondsPerPacket(), IssCommon.h) comme base du
+    // calcul du taux de reception, celle-ci s'etant averee ne pas
+    // correspondre au comportement reel observe sur le materiel (~2,56s/
+    // trame mesures, contre 2,5s attendus pour stationId=0). Mis a jour en
+    // RAM a chaque creneau (pas d'ecriture SD automatique - règle 26, voir
+    // aussi LOG_WRITE_INTERVAL_MS) : n'est persiste sur PARAMS_FILE_NAME
+    // qu'au prochain SAVE explicite, pour eviter de "reapprendre" de zero
+    // a chaque redemarrage si l'utilisateur choisit de le figer. 0 = pas
+    // encore mesure (repli sur issSecondsPerPacket() au tout premier
+    // creneau apres un demarrage a froid).
+    uint32_t getIssAverageFrameIntervalMs() const;
+    void     setIssAverageFrameIntervalMs(uint32_t intervalMs);
+
+    // true (defaut) = annonce BLE active au demarrage (voir BleLink.h),
+    // false = BLE jamais initialise. Pris en compte uniquement au
+    // demarrage (ISS_VP2_Datalog.ino) : changer ce parametre a chaud via
+    // la console necessite un redemarrage pour prendre effet, la
+    // bibliotheque Bluefruit n'etant pas concue ici pour un arret/
+    // redemarrage complet a la volee (règle 26 : pas de complexite
+    // suplementaire pour un besoin non exprime - a etendre si un vrai
+    // besoin de bascule a chaud apparait).
+    bool     getBleEnabled() const;
+    void     setBleEnabled(bool enabled);
+
 private:
     void load();
 
@@ -100,6 +127,8 @@ private:
     uint8_t  gpsMinSatellites;
     bool     dataloggerUtc;
     bool     meshUtc;
+    uint32_t issAverageFrameIntervalMs;
+    bool     bleEnabled;
 };
 
 extern Params params;
