@@ -2,9 +2,21 @@
 // Fichier   : MeshtasticTelemetry.cpp
 // ============================================================================
 #include "MeshtasticTelemetry.h"
+#include "MeshLink.h"   // TORADIO_FIELD_PACKET (constante de session, voir MeshLink.h)
 #include "ProtobufWriter.h"
 
+// Generateur d'ID de paquet (voir MeshtasticTelemetry.h : MESHPACKET_FIELD_ID,
+// et MeshLink.cpp qui memorise cette valeur pour reconnaitre le
+// FromRadio.queue_status correspondant). Un simple compteur incremental
+// suffit ici (règle 15) : on n'a pas besoin d'unicite globale sur tout le
+// mesh, seulement de distinguer NOTRE dernier paquet envoye des precedents,
+// et les envois sont espaces de 5 min (voir DataLogger.cpp). Jamais 0
+// (reserve pour "laisser le firmware attribuer lui-meme un ID", voir
+// MESHPACKET_FIELD_FROM pour la meme convention appliquee au champ FROM).
+static uint32_t nextPacketId = 1;
+
 bool meshBuildEnvironmentTelemetryToRadio(uint8_t *outputBuffer, size_t outputCapacity, size_t &outputLength,
+                                           uint32_t &packetId,
                                            uint32_t utcUnixTime,
                                            float temperatureC, float relativeHumidityPercent, float pressureHpa,
                                            uint16_t windDirectionDeg, float windSpeedKph, float windGustKph,
@@ -40,6 +52,10 @@ bool meshBuildEnvironmentTelemetryToRadio(uint8_t *outputBuffer, size_t outputCa
     dataWriter.writeVarintField(DATA_FIELD_PORTNUM, PORTNUM_TELEMETRY_APP);
     dataWriter.writeBytesField(DATA_FIELD_PAYLOAD, telemetryWriter.data(), telemetryWriter.length());
 
+    packetId = nextPacketId;
+    nextPacketId = nextPacketId + 1;
+    if (nextPacketId == 0) { nextPacketId = 1; }   // ne jamais retomber sur 0 (voir plus haut)
+
     uint8_t meshPacketBuffer[100];
     ProtobufWriter meshPacketWriter;
     meshPacketWriter.begin(meshPacketBuffer, sizeof(meshPacketBuffer));
@@ -50,6 +66,7 @@ bool meshBuildEnvironmentTelemetryToRadio(uint8_t *outputBuffer, size_t outputCa
     // writeFixed32Field() : pas d'optimisation "valeur par defaut proto3"
     // dans cette implementation - le champ apparait bien sur le fil).
     meshPacketWriter.writeFixed32Field(MESHPACKET_FIELD_FROM, 0);
+    meshPacketWriter.writeFixed32Field(MESHPACKET_FIELD_ID, packetId);
     meshPacketWriter.writeFixed32Field(MESHPACKET_FIELD_TO, MESHTASTIC_BROADCAST_ADDR);
     meshPacketWriter.writeVarintField(MESHPACKET_FIELD_CHANNEL, 0);
     meshPacketWriter.writeBytesField(MESHPACKET_FIELD_DECODED, dataWriter.data(), dataWriter.length());
@@ -63,14 +80,4 @@ bool meshBuildEnvironmentTelemetryToRadio(uint8_t *outputBuffer, size_t outputCa
     bool anyOverflow = environmentMetricsWriter.overflowed() || telemetryWriter.overflowed()
                         || dataWriter.overflowed() || meshPacketWriter.overflowed() || toRadioWriter.overflowed();
     return (anyOverflow == false);
-}
-
-bool meshBuildWantConfigToRadio(uint8_t *outputBuffer, size_t outputCapacity, size_t &outputLength, uint32_t configId)
-{
-    ProtobufWriter toRadioWriter;
-    toRadioWriter.begin(outputBuffer, outputCapacity);
-    toRadioWriter.writeVarintField(TORADIO_FIELD_WANT_CONFIG_ID, configId);
-
-    outputLength = toRadioWriter.length();
-    return (toRadioWriter.overflowed() == false);
 }

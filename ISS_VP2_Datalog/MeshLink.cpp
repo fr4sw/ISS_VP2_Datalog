@@ -27,20 +27,27 @@
 static const uint8_t MESHTASTIC_FRAME_START1 = 0x94;
 static const uint8_t MESHTASTIC_FRAME_START2 = 0xC3;
 
-// Valeur de want_config_id : voir MeshtasticTelemetry.h pour le detail des
-// valeurs speciales decouvertes par analyse d'un echange reel sur T114
-// (bug releve par l'utilisateur : "1" dans un premier jet n'etait pas
-// une simple valeur arbitraire non nulle comme suppose a tort).
-// MESHTASTIC_SPECIAL_NONCE_ONLY_CONFIG : config sans la NodeDB, plus
-// rapide - c'est ce dont ce projet a besoin (la NodeDB n'est pas exploitee).
+// Alias local pour la lisibilite du reste de ce fichier (voir MeshLink.h
+// pour la definition et le detail des valeurs speciales).
 static const uint32_t MESH_WANT_CONFIG_NONCE = MESHTASTIC_SPECIAL_NONCE_ONLY_CONFIG;
 
-// Machine a etats minimale pour l'attente d'accuse de reception (voir
-// MeshLink.h : meshLinkUpdate()). Pas d'enum dediee pour un simple booleen -
-// un seul envoi a la fois est possible (règle 15 : pas de complexite non
-// necessaire).
+// Machine a etats minimale pour le cycle "envoi -> attente de confirmation
+// -> coupure" (voir MeshLink.h : meshLinkUpdate()). Pas d'enum dediee pour
+// un simple booleen - un seul envoi a la fois est possible (règle 15).
 static bool          meshWaitingForAck = false;
-static unsigned long meshAckWaitStartMillis = 0;
+static unsigned long meshHoldStartMillis = 0;
+static unsigned long meshHoldDurationMs = 0;
+// ID du paquet de telemetrie actuellement en attente de confirmation (voir
+// MeshtasticTelemetry.h : MESHPACKET_FIELD_ID) - permet de reconnaitre
+// SPECIFIQUEMENT le FromRadio.queue_status qui lui correspond, plutot que
+// n'importe quel trafic FromRadio qui passerait par la (voir l'historique
+// dans MeshLink.h : c'est exactement le bug precedent).
+static uint32_t      meshSentPacketId = 0;
+// true des qu'un FromRadio.queue_status correspondant a meshSentPacketId a
+// ete vu - a partir de la, on ne coupe plus qu'apres une marge courte
+// (MESH_POST_QUEUE_HOLD_MS), plutot que d'attendre tout MESH_TX_HOLD_MS en
+// filet de securite.
+static bool          meshQueueConfirmed = false;
 
 #if DEBUG_MESH
 // Affiche un tampon d'octets en hexadecimal sur le moniteur serie, prefixe
@@ -66,6 +73,12 @@ static void debugPrintFrame(const char direction[], const uint8_t *frameBytes, s
         Serial.print(F(" "));
     }
     Serial.println();
+    // Sans ce flush(), deux lignes emises a plusieurs secondes d'intervalle
+    // peuvent s'afficher sur le moniteur serie avec le meme horodatage
+    // (tampon CDC-USB non vide entre-temps) - source probable de la
+    // confusion "le timeout semble instantane" relevee par l'utilisateur :
+    // le code peut tres bien avoir reellement attendu, sans que ça se voie.
+    if (Serial) { Serial.flush(); }   // jamais de flush() sans hote connecte (voir DataLogger.cpp, premiere occurrence)
 }
 #endif
 
@@ -98,12 +111,7 @@ static bool readOneFrameBlocking(uint8_t *payloadBuffer, size_t bufferCapacity, 
     {
         if (millis() >= deadlineMillis) { return false; }
         if (Serial2.available() == 0) { continue; }
-        if ((uint8_t)Serial2.peek() == MESHTASTIC_FRAME_START1)
-        {
-            Serial2.read();
-            break;
-        }
-        Serial2.read();
+        if ((uint8_t)Serial2.read() == MESHTASTIC_FRAME_START1) { break; }
     }
     while (true)
     {
@@ -150,15 +158,16 @@ static bool readOneFrameBlocking(uint8_t *payloadBuffer, size_t bufferCapacity, 
     return true;
 }
 
-// Scan minimal "sauter les champs inconnus" d'un message FromRadio deja
-// assemble, a la recherche du seul champ qui nous interesse
-// (FROMRADIO_FIELD_CONFIG_COMPLETE_ID, voir MeshtasticTelemetry.h) - PAS
+// Scan minimal "sauter les champs inconnus" d'un message protobuf deja
+// assemble, a la recherche d'UN champ VARINT precis au niveau racine - PAS
 // un decodeur protobuf generique (règle 15 : juste ce dont ce projet a
 // besoin). Gere les 4 wiretypes standard pour pouvoir sauter correctement
 // par-dessus les champs qui ne nous interessent pas ; un wiretype non
 // reconnu (groupes, obsoletes) fait abandonner le scan plutot que risquer
-// une interpretation erronee.
-static bool extractConfigCompleteId(const uint8_t *payload, uint16_t length, uint32_t &configCompleteId)
+// une interpretation erronee. Reutilisee pour FROMRADIO_FIELD_CONFIG_COMPLETE_ID
+// (voir performHandshake()) - le meme scan "sauter/chercher" s'applique
+// quel que soit le champ recherche, seul le numero de champ change.
+static bool findVarintField(const uint8_t *payload, uint16_t length, uint8_t targetFieldNumber, uint32_t &value)
 {
     uint16_t offset = 0;
     while (offset < length)
@@ -170,21 +179,21 @@ static bool extractConfigCompleteId(const uint8_t *payload, uint16_t length, uin
 
         if (wireType == 0)   // varint
         {
-            uint32_t value = 0;
+            uint32_t fieldValue = 0;
             uint8_t shift = 0;
             bool complete = false;
             while (offset < length)
             {
                 uint8_t b = payload[offset];
                 offset = offset + 1;
-                value = value | (((uint32_t)(b & 0x7F)) << shift);
+                fieldValue = fieldValue | (((uint32_t)(b & 0x7F)) << shift);
                 shift = shift + 7;
                 if ((b & 0x80) == 0) { complete = true; break; }
             }
             if (complete == false) { return false; }
-            if (fieldNumber == FROMRADIO_FIELD_CONFIG_COMPLETE_ID)
+            if (fieldNumber == targetFieldNumber)
             {
-                configCompleteId = value;
+                value = fieldValue;
                 return true;
             }
         }
@@ -223,6 +232,159 @@ static bool extractConfigCompleteId(const uint8_t *payload, uint16_t length, uin
     return false;
 }
 
+// Meme principe que findVarintField(), pour un champ FIXED32 (little-endian,
+// voir ProtobufWriter::writeFixed32Field() - meme convention cote ecriture).
+// Utilisee pour QueueStatus.mesh_packet_id (voir MeshLink.h - hypothese de
+// type non verifiee, par analogie avec MeshPacket.id qui est fixed32).
+static bool findFixed32Field(const uint8_t *payload, uint16_t length, uint8_t targetFieldNumber, uint32_t &value)
+{
+    uint16_t offset = 0;
+    while (offset < length)
+    {
+        uint8_t tag = payload[offset];
+        offset = offset + 1;
+        uint8_t fieldNumber = tag >> 3;
+        uint8_t wireType = tag & 0x07;
+
+        if (wireType == 5)   // fixed32
+        {
+            if ((uint32_t)offset + 4 > (uint32_t)length) { return false; }
+            uint32_t fieldValue = (uint32_t)payload[offset]
+                                 | ((uint32_t)payload[offset + 1] << 8)
+                                 | ((uint32_t)payload[offset + 2] << 16)
+                                 | ((uint32_t)payload[offset + 3] << 24);
+            offset = (uint16_t)(offset + 4);
+            if (fieldNumber == targetFieldNumber)
+            {
+                value = fieldValue;
+                return true;
+            }
+        }
+        else if (wireType == 0)   // varint
+        {
+            uint8_t shift = 0;
+            bool complete = false;
+            while (offset < length)
+            {
+                uint8_t b = payload[offset];
+                offset = offset + 1;
+                shift = shift + 7;
+                if ((b & 0x80) == 0) { complete = true; break; }
+            }
+            if (complete == false) { return false; }
+        }
+        else if (wireType == 2)   // length-delimited
+        {
+            uint32_t subLength = 0;
+            uint8_t shift = 0;
+            bool complete = false;
+            while (offset < length)
+            {
+                uint8_t b = payload[offset];
+                offset = offset + 1;
+                subLength = subLength | (((uint32_t)(b & 0x7F)) << shift);
+                shift = shift + 7;
+                if ((b & 0x80) == 0) { complete = true; break; }
+            }
+            if (complete == false) { return false; }
+            if ((uint32_t)offset + subLength > (uint32_t)length) { return false; }
+            offset = (uint16_t)(offset + subLength);
+        }
+        else if (wireType == 1)   // fixed64
+        {
+            if ((uint32_t)offset + 8 > (uint32_t)length) { return false; }
+            offset = (uint16_t)(offset + 8);
+        }
+        else
+        {
+            return false;
+        }
+    }
+    return false;
+}
+
+// Localise un sous-message (champ length-delimited) de numero
+// targetFieldNumber au niveau racine de payload - utilisee pour retrouver
+// FromRadio.queue_status avant d'y chercher mesh_packet_id (voir
+// meshLinkUpdate()). Meme logique de saut que les fonctions ci-dessus.
+static bool findSubMessage(const uint8_t *payload, uint16_t length, uint8_t targetFieldNumber,
+                            const uint8_t *&subPayload, uint16_t &subLength)
+{
+    uint16_t offset = 0;
+    while (offset < length)
+    {
+        uint8_t tag = payload[offset];
+        offset = offset + 1;
+        uint8_t fieldNumber = tag >> 3;
+        uint8_t wireType = tag & 0x07;
+
+        if (wireType == 2)   // length-delimited
+        {
+            uint32_t declaredSubLength = 0;
+            uint8_t shift = 0;
+            bool complete = false;
+            while (offset < length)
+            {
+                uint8_t b = payload[offset];
+                offset = offset + 1;
+                declaredSubLength = declaredSubLength | (((uint32_t)(b & 0x7F)) << shift);
+                shift = shift + 7;
+                if ((b & 0x80) == 0) { complete = true; break; }
+            }
+            if (complete == false) { return false; }
+            if ((uint32_t)offset + declaredSubLength > (uint32_t)length) { return false; }
+            if (fieldNumber == targetFieldNumber)
+            {
+                subPayload = payload + offset;
+                subLength = (uint16_t)declaredSubLength;
+                return true;
+            }
+            offset = (uint16_t)(offset + declaredSubLength);
+        }
+        else if (wireType == 0)   // varint
+        {
+            uint8_t shift = 0;
+            bool complete = false;
+            while (offset < length)
+            {
+                uint8_t b = payload[offset];
+                offset = offset + 1;
+                shift = shift + 7;
+                if ((b & 0x80) == 0) { complete = true; break; }
+            }
+            if (complete == false) { return false; }
+        }
+        else if (wireType == 5)
+        {
+            if ((uint32_t)offset + 4 > (uint32_t)length) { return false; }
+            offset = (uint16_t)(offset + 4);
+        }
+        else if (wireType == 1)
+        {
+            if ((uint32_t)offset + 8 > (uint32_t)length) { return false; }
+            offset = (uint16_t)(offset + 8);
+        }
+        else
+        {
+            return false;
+        }
+    }
+    return false;
+}
+
+
+// Construit le message ToRadio "want_config_id" (poignee de main initiale).
+// Deplacee ici depuis MeshtasticTelemetry.cpp (organisation revue, voir
+// MeshLink.h) : ce message ne concerne que la session, pas la telemetrie.
+static bool meshBuildWantConfigToRadio(uint8_t *outputBuffer, size_t outputCapacity, size_t &outputLength, uint32_t configId)
+{
+    ProtobufWriter toRadioWriter;
+    toRadioWriter.begin(outputBuffer, outputCapacity);
+    toRadioWriter.writeVarintField(TORADIO_FIELD_WANT_CONFIG_ID, configId);
+
+    outputLength = toRadioWriter.length();
+    return (toRadioWriter.overflowed() == false);
+}
 
 // Envoie la "poignee de main" et attend le VRAI signal de fin
 // (FromRadio.config_complete_id echoant MESH_WANT_CONFIG_NONCE, voir
@@ -266,7 +428,7 @@ static void performHandshake()
 #endif
 
         uint32_t configCompleteId = 0;
-        bool found = extractConfigCompleteId(framePayload, frameLength, configCompleteId);
+        bool found = findVarintField(framePayload, frameLength, FROMRADIO_FIELD_CONFIG_COMPLETE_ID, configCompleteId);
         if ((found == true) && (configCompleteId == MESH_WANT_CONFIG_NONCE))
         {
             configComplete = true;
@@ -279,6 +441,79 @@ static void performHandshake()
         if (Serial) { Serial.flush(); }   // jamais de flush() sans hote connecte (voir DataLogger.cpp, premiere occurrence)
         logEvent(F("Timeout poignee de main Meshtastic"));
     }
+}
+
+// Version NON BLOQUANTE de l'assemblage de trame (contrairement a
+// readOneFrameBlocking(), utilisee uniquement pendant la poignee de main
+// qui est un contexte deja bloquant/court). Necessaire ici : meshLinkUpdate()
+// est appelee a chaque loop() et ne doit JAMAIS bloquer (retarderait la
+// reception RS485, voir MeshLink.h). Etat conserve entre les appels
+// (machine a etats explicite) : consomme tout ce qui est disponible sur
+// Serial2 a CHAQUE appel, peut completer une trame etalee sur plusieurs
+// appels successifs. Renvoie true UNE fois par trame complete assemblee.
+enum IncomingFrameState
+{
+    FRAME_STATE_WAIT_START1,
+    FRAME_STATE_WAIT_START2,
+    FRAME_STATE_WAIT_LEN_HI,
+    FRAME_STATE_WAIT_LEN_LO,
+    FRAME_STATE_WAIT_PAYLOAD
+};
+static IncomingFrameState incomingFrameState = FRAME_STATE_WAIT_START1;
+static uint16_t           incomingFrameDeclaredLength = 0;
+static uint16_t           incomingFrameReceivedLength = 0;
+static uint8_t             incomingFramePayload[MESH_FRAME_PAYLOAD_MAX_LEN];
+
+static bool pumpIncomingFrame(const uint8_t *&payloadOut, uint16_t &lengthOut)
+{
+    while (Serial2.available() > 0)
+    {
+        uint8_t b = (uint8_t)Serial2.read();
+        switch (incomingFrameState)
+        {
+            case FRAME_STATE_WAIT_START1:
+                if (b == MESHTASTIC_FRAME_START1) { incomingFrameState = FRAME_STATE_WAIT_START2; }
+                break;
+
+            case FRAME_STATE_WAIT_START2:
+                incomingFrameState = (b == MESHTASTIC_FRAME_START2) ? FRAME_STATE_WAIT_LEN_HI : FRAME_STATE_WAIT_START1;
+                break;
+
+            case FRAME_STATE_WAIT_LEN_HI:
+                incomingFrameDeclaredLength = (uint16_t)((uint16_t)b << 8);
+                incomingFrameState = FRAME_STATE_WAIT_LEN_LO;
+                break;
+
+            case FRAME_STATE_WAIT_LEN_LO:
+                incomingFrameDeclaredLength = (uint16_t)(incomingFrameDeclaredLength | b);
+                incomingFrameReceivedLength = 0;
+                if ((incomingFrameDeclaredLength == 0) || (incomingFrameDeclaredLength > sizeof(incomingFramePayload)))
+                {
+                    // Vide ou trop grande pour notre tampon : on se
+                    // resynchronise sans essayer de la lire (meme choix
+                    // que readOneFrameBlocking() pour le meme cas).
+                    incomingFrameState = FRAME_STATE_WAIT_START1;
+                }
+                else
+                {
+                    incomingFrameState = FRAME_STATE_WAIT_PAYLOAD;
+                }
+                break;
+
+            case FRAME_STATE_WAIT_PAYLOAD:
+                incomingFramePayload[incomingFrameReceivedLength] = b;
+                incomingFrameReceivedLength = incomingFrameReceivedLength + 1;
+                if (incomingFrameReceivedLength >= incomingFrameDeclaredLength)
+                {
+                    incomingFrameState = FRAME_STATE_WAIT_START1;
+                    payloadOut = incomingFramePayload;
+                    lengthOut = incomingFrameDeclaredLength;
+                    return true;
+                }
+                break;
+        }
+    }
+    return false;
 }
 
 // Coupure complete du lien Mesh (voir MeshLink.h, point 6 de la sequence) :
@@ -294,6 +529,7 @@ static void meshShutdown()
     power.disableMesh();
     sharedUartRelease(SHARED_UART_MESH);
     meshWaitingForAck = false;
+    meshQueueConfirmed = false;
 }
 
 bool meshLinkSendEnvironmentTelemetry(uint32_t utcUnixTime,
@@ -329,7 +565,8 @@ bool meshLinkSendEnvironmentTelemetry(uint32_t utcUnixTime,
 
     uint8_t telemetryBuffer[128];
     size_t telemetryLength = 0;
-    bool built = meshBuildEnvironmentTelemetryToRadio(telemetryBuffer, sizeof(telemetryBuffer), telemetryLength,
+    uint32_t packetId = 0;
+    bool built = meshBuildEnvironmentTelemetryToRadio(telemetryBuffer, sizeof(telemetryBuffer), telemetryLength, packetId,
                                                         utcUnixTime, temperatureC, relativeHumidityPercent, pressureHpa,
                                                         windDirectionDeg, windSpeedKph, windGustKph, rainfall1hMm, rainfall24hMm);
 
@@ -343,16 +580,21 @@ bool meshLinkSendEnvironmentTelemetry(uint32_t utcUnixTime,
     }
 
     sendFramedToRadio(telemetryBuffer, telemetryLength);
-    Serial.println(F("[MeshLink] Telemetrie ecrite sur l'UART, attente d'une reponse du T114..."));
+    Serial.print(F("[MeshLink] Telemetrie (id "));
+    Serial.print(packetId);
+    Serial.println(F(") ecrite sur l'UART, attente de confirmation du T114..."));
     if (Serial) { Serial.flush(); }   // jamais de flush() sans hote connecte (voir DataLogger.cpp, premiere occurrence)
-    logEvent(F("Telemetrie ecrite vers Meshtastic, attente reponse"));
+    logEvent(F("Telemetrie ecrite vers Meshtastic, attente confirmation"));
 
     // Alimentation VOLONTAIREMENT maintenue (voir MeshLink.h) : ecrire les
     // octets sur l'UART ne signifie pas que le T114 a fini de les emettre
     // sur le reseau radio. La coupure se fait dans meshLinkUpdate(), sur
-    // reponse recue ou sur timeout.
+    // confirmation de mise en file (FromRadio.queue_status) ou sur timeout.
+    meshSentPacketId = packetId;
+    meshQueueConfirmed = false;
     meshWaitingForAck = true;
-    meshAckWaitStartMillis = millis();
+    meshHoldStartMillis = millis();
+    meshHoldDurationMs = MESH_TX_HOLD_MS;
     return true;
 }
 
@@ -363,36 +605,67 @@ void meshLinkUpdate()
         return;
     }
 
-    // Vide et journalise ce qui arrive (utile pour le diagnostic, voir
-    // DEBUG_MESH), mais NE DECLENCHE PLUS la coupure d'alimentation sur la
-    // simple presence d'octets - voir Config.h : MESH_TX_HOLD_MS pour
-    // l'explication complete (analyse d'un echange reel montrant que le
-    // premier octet recu n'etait pas un accuse lie a notre paquet, mais un
-    // fragment de FromRadio.config sans rapport, en cours de dialogue de
-    // configuration independant).
-    if (Serial2.available() > 0)
+    // Assemble les trames qui arrivent, une par appel au plus (voir
+    // pumpIncomingFrame() - non bloquant, peut en manquer une si plusieurs
+    // arrivent dans le meme intervalle de loop(), rattrapee au prochain
+    // appel). Chaque trame complete est confrontee a FromRadio.queue_status
+    // (voir MeshLink.h : hypothese de numeros de champ, PAS verifiee comme
+    // config_complete_id) : si mesh_packet_id correspond a NOTRE dernier
+    // envoi, c'est la confirmation que le T114 a bien mis ce paquet precis
+    // en file d'emission - pas juste "un octet est arrive" comme dans un
+    // premier jet (bug releve par l'utilisateur, voir l'historique dans
+    // MeshLink.h).
+    const uint8_t *framePayload = nullptr;
+    uint16_t       frameLength = 0;
+    bool gotFrame = pumpIncomingFrame(framePayload, frameLength);
+    if (gotFrame == true)
     {
 #if DEBUG_MESH
-        uint8_t rxBuffer[64];
-        size_t  rxLength = 0;
-        while ((Serial2.available() > 0) && (rxLength < sizeof(rxBuffer)))
-        {
-            rxBuffer[rxLength] = (uint8_t)Serial2.read();
-            rxLength = rxLength + 1;
-        }
-        debugPrintFrame("RX (pendant l'attente, non attribuable a notre paquet)", rxBuffer, rxLength);
-#else
-        while (Serial2.available() > 0)
-        {
-            Serial2.read();
-        }
+        debugPrintFrame("RX (pendant l'attente)", framePayload, frameLength);
 #endif
+
+        if (meshQueueConfirmed == false)
+        {
+            const uint8_t *queueStatusPayload = nullptr;
+            uint16_t       queueStatusLength = 0;
+            bool foundQueueStatus = findSubMessage(framePayload, frameLength, FROMRADIO_FIELD_QUEUE_STATUS,
+                                                    queueStatusPayload, queueStatusLength);
+            if (foundQueueStatus == true)
+            {
+                uint32_t queuedPacketId = 0;
+                bool foundPacketId = findFixed32Field(queueStatusPayload, queueStatusLength,
+                                                       QUEUESTATUS_FIELD_MESH_PACKET_ID, queuedPacketId);
+                if ((foundPacketId == true) && (queuedPacketId == meshSentPacketId))
+                {
+                    meshQueueConfirmed = true;
+                    Serial.println(F("[MeshLink] Confirmation queue_status recue pour notre paquet : mise en emission confirmee cote T114"));
+                    if (Serial) { Serial.flush(); }   // jamais de flush() sans hote connecte (voir DataLogger.cpp, premiere occurrence)
+                    logEvent(F("Telemetrie Meshtastic confirmee en file d'emission"));
+                    // Raccourcit l'echeance de coupure : plus besoin d'attendre
+                    // tout MESH_TX_HOLD_MS (filet de securite pour le cas SANS
+                    // confirmation) - une marge courte suffit desormais pour
+                    // laisser le temps a l'emission radio elle-meme (voir
+                    // Config.h : MESH_POST_QUEUE_HOLD_MS).
+                    meshHoldStartMillis = millis();
+                    meshHoldDurationMs = MESH_POST_QUEUE_HOLD_MS;
+                }
+            }
+        }
     }
 
-    unsigned long holdElapsed = millis() - meshAckWaitStartMillis;
-    if (holdElapsed >= MESH_TX_HOLD_MS)
+    // Meme idiome robuste au retournement de millis() (~49 jours) que
+    // DataLogger.cpp (voir intervalDue) : ecart depuis un depart compare a
+    // une duree, jamais une echeance absolue comparee directement.
+    if ((millis() - meshHoldStartMillis) >= meshHoldDurationMs)
     {
-        Serial.println(F("[MeshLink] Delai ecoule (voir MESH_TX_HOLD_MS) : coupure de l'alimentation Mesh"));
+        if (meshQueueConfirmed == true)
+        {
+            Serial.println(F("[MeshLink] Marge post-confirmation ecoulee (voir MESH_POST_QUEUE_HOLD_MS) : coupure de l'alimentation Mesh"));
+        }
+        else
+        {
+            Serial.println(F("[MeshLink] Delai ecoule sans confirmation queue_status (voir MESH_TX_HOLD_MS) : coupure de l'alimentation Mesh"));
+        }
         if (Serial) { Serial.flush(); }   // jamais de flush() sans hote connecte (voir DataLogger.cpp, premiere occurrence)
         logEvent(F("Fin de la fenetre d'envoi Meshtastic"));
         meshShutdown();

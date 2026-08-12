@@ -10,11 +10,22 @@
 //             volontairement pour rester simple et lisible sans outillage
 //             de generation, au prix de ne couvrir que les champs utiles a
 //             ce projet - a etendre au meme endroit si besoin).
-// Fonctions : meshBuildEnvironmentTelemetryToRadio() - construit un message
+//             PERIMETRE : uniquement la structure du MESSAGE DE TELEMETRIE
+//             lui-meme (ce qu'on met dedans). Tout ce qui concerne la
+//             SESSION/POIGNEE DE MAIN avec la radio (want_config_id,
+//             config_complete_id, QueueStatus, ...) vit dans MeshLink.h/.cpp
+//             - ce n'est pas specifique a la telemetrie, ce serait
+//             necessaire meme sans aucune donnee a transmettre (organisation
+//             revue suite a une remarque justifiee de l'utilisateur : ces
+//             deux connaissances etaient melangees dans un premier jet).
+// Fonction  : meshBuildEnvironmentTelemetryToRadio() - construit un message
 //             ToRadio complet, pret a etre envoye tel quel par MeshLink
 //             (qui se charge de l'entete de trame START1/START2/longueur).
-//             meshBuildWantConfigToRadio() - construit le message ToRadio
-//             de "poignee de main" initiale (voir MeshLink.cpp).
+//             Renvoie egalement l'ID qu'il a attribue au MeshPacket
+//             (packetId, voir MESHPACKET_FIELD_ID ci-dessous) : MeshLink en
+//             a besoin pour reconnaitre PLUS TARD le FromRadio.queue_status
+//             qui confirmera que CE paquet precis a bien ete mis en file
+//             d'emission (voir MeshLink.cpp).
 // Référence : Tous les numeros de champs ci-dessous sont copies depuis les
 //             fichiers .proto officiels du projet Meshtastic (depot
 //             meshtastic/protobufs, miroir consultable sur
@@ -32,34 +43,6 @@
 #pragma once
 #include <Arduino.h>
 
-// --- meshtastic/mesh.proto : message ToRadio (client -> radio) ---
-#define TORADIO_FIELD_PACKET           1   // MeshPacket a emettre sur le mesh
-#define TORADIO_FIELD_WANT_CONFIG_ID   3   // uint32, demarre la "poignee de main"
-
-// Valeurs SPECIALES de want_config_id (donc de FromRadio.config_complete_id
-// en retour, qui l'echo tel quel) - decouvertes par analyse d'un echange
-// reel sur T114 (confirmees par l'utilisateur, PAS documentees dans les
-// commentaires des .proto officiels a notre connaissance) : le firmware
-// bifurque son comportement selon la valeur exacte envoyee, ce n'est PAS
-// un simple jeton opaque comme suppose a tort dans un premier jet.
-//   SPECIAL_NONCE_ONLY_CONFIG (69420) -> renvoie la config (device/module/
-//     canaux) SANS la base de nœuds (NodeInfo*N) - plus rapide, c'est ce
-//     qu'on veut ici (on n'exploite pas la NodeDB).
-//   SPECIAL_NONCE_ONLY_DB (69421) -> l'inverse : NodeDB SEULEMENT, sans la
-//     config.
-//   Toute AUTRE valeur -> comportement non caracterise ici (vraisemblablement
-//     config + NodeDB completes, plus lent) - a eviter sans raison precise.
-#define MESHTASTIC_SPECIAL_NONCE_ONLY_CONFIG   69420UL
-#define MESHTASTIC_SPECIAL_NONCE_ONLY_DB       69421UL
-
-// --- meshtastic/mesh.proto : message FromRadio (radio -> client) ---
-// Seul le champ dont ce projet a l'usage reel est liste ici (règle 15) -
-// voir MeshLink.cpp : c'est LA fin de la poignee de main a detecter (pas
-// un delai fixe arbitraire comme dans un premier jet) : FromRadio.
-// config_complete_id echo la valeur de want_config_id envoyee (voir
-// ci-dessus) une fois la sequence de config terminee.
-#define FROMRADIO_FIELD_CONFIG_COMPLETE_ID   7   // uint32, echo de want_config_id
-
 // --- meshtastic/mesh.proto : message MeshPacket ---
 // ATTENTION : le champ FROM (1) etait absent d'un premier jet de ce code -
 // bug releve par l'utilisateur (verification independante sur un vrai
@@ -71,10 +54,19 @@
 // serie local, le client n'a pas besoin de connaitre son propre node ID).
 #define MESHPACKET_FIELD_FROM       1   // fixed32, 0 = laisse le firmware substituer
                                          // le node ID reel du port serie local
+#define MESHPACKET_FIELD_ID         6   // fixed32, identifiant du paquet - genere par
+                                         // nous-memes desormais (voir meshBuildEnvironmentTelemetryToRadio()),
+                                         // pour pouvoir reconnaitre le FromRadio.queue_status
+                                         // qui lui correspondra (voir MeshLink.cpp)
 #define MESHPACKET_FIELD_TO         2   // fixed32, destinataire (broadcast ci-dessous)
 #define MESHPACKET_FIELD_CHANNEL    3   // uint32, index de canal (0 = canal principal)
 #define MESHPACKET_FIELD_DECODED    4   // Data en clair (vs "encrypted", non utilise ici)
-#define MESHPACKET_FIELD_WANT_ACK   10  // bool
+#define MESHPACKET_FIELD_WANT_ACK   10  // bool - JAMAIS ecrit dans ce projet : un paquet
+                                         // broadcast ne peut pas demander d'accuse de
+                                         // reception au sens Meshtastic (confirme aupres
+                                         // de la communaute) - ce champ reste documente
+                                         // ici uniquement pour memoire, ne pas l'utiliser
+                                         // sans repasser en direct (non-broadcast)
 
 #define MESHTASTIC_BROADCAST_ADDR   0xFFFFFFFFUL   // ^tous les nœuds (mesh.proto)
 
@@ -118,15 +110,13 @@
 // Construit le message ToRadio de telemetrie environnementale dans
 // outputBuffer. Renvoie true si tout a tenu dans outputCapacity (règle 23 :
 // un echec doit etre detectable, jamais un debordement silencieux).
+// packetId (sortie) : l'identifiant que CETTE fonction a elle-meme attribue
+// au MeshPacket (voir MESHPACKET_FIELD_ID ci-dessus) - a memoriser cote
+// appelant pour reconnaitre plus tard le FromRadio.queue_status
+// correspondant (voir MeshLink.cpp).
 bool meshBuildEnvironmentTelemetryToRadio(uint8_t *outputBuffer, size_t outputCapacity, size_t &outputLength,
+                                           uint32_t &packetId,
                                            uint32_t utcUnixTime,
                                            float temperatureC, float relativeHumidityPercent, float pressureHpa,
                                            uint16_t windDirectionDeg, float windSpeedKph, float windGustKph,
                                            float rainfall1hMm, float rainfall24hMm);
-
-// Construit le message ToRadio "want_config_id" (poignee de main initiale,
-// voir MeshLink.cpp). configId est une valeur arbitraire non nulle choisie
-// par le client, renvoyee telle quelle par la radio dans FromRadio pour
-// signaler la fin de l'envoi de sa configuration (non exploite dans ce
-// premier jet, voir MeshLink.h).
-bool meshBuildWantConfigToRadio(uint8_t *outputBuffer, size_t outputCapacity, size_t &outputLength, uint32_t configId);

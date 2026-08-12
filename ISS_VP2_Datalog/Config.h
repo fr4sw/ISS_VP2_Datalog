@@ -130,7 +130,7 @@
 // avant le signal de fin, generalement en quelques centaines de ms avec
 // MESHTASTIC_SPECIAL_NONCE_ONLY_CONFIG (pas de NodeDB a transferer) - cette
 // valeur est une marge de securite, pas un delai "normal" attendu.
-#define MESH_HANDSHAKE_MAX_WAIT_MS   2000UL   // ms (2 s)
+#define MESH_HANDSHAKE_MAX_WAIT_MS   25000UL   // ms (2 s)
 
 // Taille max d'une trame FromRadio individuelle que l'on peut lire pendant
 // la poignee de main (voir MeshLink.cpp : readOneFrameBlocking()). Une
@@ -167,7 +167,19 @@
 // dequeue) pour une confirmation fiable et plus rapide - non implemente
 // dans ce premier jet (règle 26 : pas de complexite avant validation
 // fonctionnelle de base).
-#define MESH_TX_HOLD_MS              5000UL   // ms (5 s)
+#define MESH_TX_HOLD_MS              15000UL   // ms (5 s)
+
+// Marge maintenue APRES confirmation FromRadio.queue_status (voir
+// MeshLink.cpp) que NOTRE paquet a bien ete mis en file d'emission
+// cote T114 : remplace alors MESH_TX_HOLD_MS comme duree de maintien
+// de l'alimentation, bien plus courte puisqu'on a une vraie
+// confirmation (pas juste une hypothese pessimiste). Couvre encore le
+// temps d'emission radio proprement dit (mise en file != emis), mais
+// avec bien moins d'incertitude que sans confirmation du tout - voir
+// MESH_TX_HOLD_MS pour le filet de securite si cette confirmation
+// n'arrive jamais (mauvaise hypothese de numero de champ, voir
+// MeshLink.h : LIMITE ASSUMEE).
+#define MESH_POST_QUEUE_HOLD_MS      1500UL   // ms (1,5 s)
 
 // --- Creneau de "transmission" (règle Davis/WeeWx/Weatherlink) ---
 // Contrairement a l'ecriture SD (LOG_WRITE_INTERVAL_MS_DEFAULT, plus
