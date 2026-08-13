@@ -82,6 +82,13 @@
 // reel ; a etendre en minutes le jour ou une campagne le necessite).
 #define TIMEZONE_OFFSET_HOURS_DEFAULT   4
 
+// Defauts des parametres DATALOGGERUTC/MESHUTC/BLEENABLED (voir Params.cpp) -
+// codes en dur a tort dans un premier jet, corrige pour rester coherent
+// avec tout autre parametre ajustable (le defaut vit toujours ici).
+#define DATALOGGER_UTC_DEFAULT   false
+#define MESH_UTC_DEFAULT         false
+#define BLE_ENABLED_DEFAULT      true
+
 // --- GPS (TIME_MODE_GPS_RTC / TIME_MODE_GPS_ONLY) ---
 // GPS_TIMEOUT genereux : un premier point a froid (cold start) peut
 // demander de 5 a 15 minutes, pas quelques secondes.
@@ -119,67 +126,74 @@
 // reglage que la console/API protobuf). Modifiable sans reprogrammer via
 // le parametre MESHBAUD (Params) une fois verifie.
 #define MESH_BAUD_DEFAULT           38400UL
-// Delai (bloquant, voir MeshLink.cpp) laisse au T114 pour cesser d'emettre
-// du texte de debug apres la poignee de main, avant de lui envoyer la
-// telemetrie.
-// Attente MAXIMALE du vrai signal de fin de poignee de main
-// (FromRadio.config_complete_id, voir MeshLink.cpp/MeshtasticTelemetry.h) -
-// remplace l'ancien MESH_HANDSHAKE_SETTLE_MS (250ms fixes, sans rien
-// verifier) suite a l'analyse d'un echange reel sur T114 : le firmware
-// peut envoyer plusieurs trames intermediaires (Config, NodeInfo, ...)
-// avant le signal de fin, generalement en quelques centaines de ms avec
-// MESHTASTIC_SPECIAL_NONCE_ONLY_CONFIG (pas de NodeDB a transferer) - cette
-// valeur est une marge de securite, pas un delai "normal" attendu.
-#define MESH_HANDSHAKE_MAX_WAIT_MS   25000UL   // ms (2 s)
 
-// Taille max d'une trame FromRadio individuelle que l'on peut lire pendant
-// la poignee de main (voir MeshLink.cpp : readOneFrameBlocking()). Une
-// trame de configuration reelle observee faisait 136 octets de charge
-// utile - marge confortable au-dessus. Une trame plus grande que cela est
-// simplement videe et ignoree (pas de depassement de tampon, voir
-// readOneFrameBlocking()), au prix de ne pas pouvoir l'interpreter - sans
-// consequence pour le seul champ qui nous interesse ici (config_complete_id
-// est un varint, toujours minuscule).
+// Delai (bloquant, voir MeshLink.cpp) laisse au T114 pour demarrer sa
+// pile logicielle apres mise sous tension, avant de lui parler - un
+// modem qui vient de s'alimenter n'a pas forcement son UART pret
+// immediatement. Valeur par defaut prudente, non mesuree sur ce materiel
+// precis (à ajuster empiriquement si la poignee de main echoue
+// systematiquement au premier essai apres coupure d'alimentation).
+// Egalement disponible en parametre (Params::getMeshPowerOnSettleMs(),
+// console MESHPOWERONMS) pour ajustement sans reprogrammer.
+#define MESH_POWERON_SETTLE_MS_DEFAULT   1000UL   // ms (1 s)
+
+// Attente MAXIMALE du signal de fin de poignee de main
+// (FromRadio.config_complete_id) avant d'abandonner et d'envoyer quand
+// meme (voir MeshLink.cpp : performHandshake()). Le firmware peut envoyer
+// plusieurs trames intermediaires avant ce signal ; generalement recu en
+// quelques centaines de ms avec MESHTASTIC_SPECIAL_NONCE_ONLY_CONFIG.
+#define MESH_HANDSHAKE_MAX_WAIT_MS   2000UL   // ms (2 s)
+
+// Taille max d'une trame FromRadio individuelle lisible par ce projet
+// (voir MeshLink.cpp). Une trame plus grande est videe et ignoree sans
+// depassement de tampon - sans consequence pour les champs qui nous
+// interessent (varints, toujours petits). Marge confortable au-dessus
+// d'une trame de configuration reelle observee (136 octets).
 #define MESH_FRAME_PAYLOAD_MAX_LEN   200
-// Duree pendant laquelle l'alimentation Mesh est maintenue APRES l'envoi
-// d'un paquet de telemetrie, avant de couper - voir MeshLink.cpp :
-// meshLinkUpdate(). Non bloquant (verifie a chaque loop(), pas d'attente
-// active) : n'empeche PAS la reception RS485 pendant ce delai.
-//
-// IMPORTANT (revu apres analyse d'echanges reels sur materiel, voir
-// MeshLink.cpp) : ce n'est PAS un timeout d'attente d'accuse de reception.
-// Un paquet envoye en broadcast ne PEUT PAS demander d'accuse de reception
-// au sens Meshtastic (confirme aupres de la communaute) - MESHPACKET_FIELD_WANT_ACK
-// n'est d'ailleurs jamais ecrit dans ce projet (voir MeshtasticTelemetry.cpp).
-// Un premier jet coupait l'alimentation des le premier octet recu en
-// reponse, en supposant a tort qu'il s'agissait d'un accuse de reception
-// specifique a NOTRE paquet - analyse d'un echange reel : l'octet recu
-// etait en realite un fragment du flux FromRadio.config, simple suite du
-// dialogue de configuration deja en cours, sans aucun rapport avec notre
-// envoi. Coupure mesuree a ~47ms apres l'ecriture - bien trop rapide pour
-// une emission LoRa reelle (SF7 : dizaines de ms rien que pour l'air-time,
-// SF12 : plusieurs secondes), meme sans compter le temps de mise en file
-// d'attente cote firmware.
-// Cette duree est donc une marge FORFAITAIRE avant coupure, pas une
-// attente d'evenement precis - generuse pour couvrir le pire cas realiste
-// (SF12 + file d'attente chargee). A affiner plus tard en analysant
-// specifiquement FromRadio.queueStatus (champ 10, contient l'ID du paquet
-// dequeue) pour une confirmation fiable et plus rapide - non implemente
-// dans ce premier jet (règle 26 : pas de complexite avant validation
-// fonctionnelle de base).
-#define MESH_TX_HOLD_MS              15000UL   // ms (5 s)
 
-// Marge maintenue APRES confirmation FromRadio.queue_status (voir
-// MeshLink.cpp) que NOTRE paquet a bien ete mis en file d'emission
-// cote T114 : remplace alors MESH_TX_HOLD_MS comme duree de maintien
-// de l'alimentation, bien plus courte puisqu'on a une vraie
-// confirmation (pas juste une hypothese pessimiste). Couvre encore le
-// temps d'emission radio proprement dit (mise en file != emis), mais
-// avec bien moins d'incertitude que sans confirmation du tout - voir
-// MESH_TX_HOLD_MS pour le filet de securite si cette confirmation
-// n'arrive jamais (mauvaise hypothese de numero de champ, voir
-// MeshLink.h : LIMITE ASSUMEE).
+// Plafond du nombre d'octets consommes en UN appel a pumpIncomingFrame()
+// (voir MeshLink.cpp) - garantit que loop() reprend toujours la main
+// rapidement, meme si Serial2 recoit un flux soutenu plus vite qu'on ne
+// le lit (bug reel corrige : sans cette limite, un flot continu gelait
+// la carte entiere, console incluse). Largement au-dessus d'une trame
+// utile typique (200 octets, voir MESH_FRAME_PAYLOAD_MAX_LEN) pour ne
+// jamais couper une trame normale en plusieurs appels inutilement.
+#define MESH_PUMP_MAX_BYTES_PER_CALL 512
+
+// Duree MAXIMALE de maintien de l'alimentation Mesh apres l'envoi d'un
+// paquet de telemetrie (voir MeshLink.cpp : meshLinkUpdate()) - filet de
+// securite si aucune confirmation FromRadio.queue_status n'est jamais
+// recue pour ce paquet. Non bloquant : n'empeche pas la reception RS485.
+// Un paquet broadcast ne peut pas demander d'accuse de reception au sens
+// Meshtastic ; la seule confirmation fiable disponible est queue_status
+// (voir MESH_POST_QUEUE_HOLD_MS et MESH_QUEUE_DRAIN_HOLD_MS ci-dessous,
+// qui permettent generalement de couper bien avant ce delai).
+#define MESH_TX_HOLD_MS              5000UL   // ms (5 s)
+
+// Duree de maintien REDUITE une fois confirme, via FromRadio.queue_status,
+// que NOTRE paquet a bien ete accepte en file d'emission cote T114 (voir
+// meshLinkUpdate()) - remplace MESH_TX_HOLD_MS des cet instant. Couvre le
+// temps d'emission radio proprement dit (mise en file != emis), qu'on ne
+// peut pas encore confirmer a ce stade.
 #define MESH_POST_QUEUE_HOLD_MS      1500UL   // ms (1,5 s)
+
+// Delai avant l'envoi d'un heartbeat de relance si aucune confirmation
+// queue_status n'est encore arrivee (voir MeshLink.cpp : meshLinkUpdate()).
+// Experimental, gain non garanti (le firmware ne repond pas directement a
+// un heartbeat, voir MeshLink.h) mais sans risque.
+#define MESH_HEARTBEAT_NUDGE_DELAY_MS 800UL   // ms
+
+// Defaut du parametre MESHSKIPHANDSHAKE (voir Params::getMeshSkipHandshake()) -
+// comme pour tout autre parametre ajustable, le defaut vit ICI (Config.h),
+// jamais code en dur dans Params.cpp.
+#define MESH_SKIP_HANDSHAKE_DEFAULT   false
+
+// Duree de maintien ENCORE PLUS COURTE une fois confirme que la file
+// d'emission est retombee a vide (free == maxlen) APRES avoir vu notre
+// paquet y entrer - la meilleure confirmation disponible que notre paquet
+// est reellement parti (transmis ou abandonne), pas juste accepte. Simple
+// marge de secours, pas une vraie attente (voir meshLinkUpdate()).
+#define MESH_QUEUE_DRAIN_HOLD_MS     300UL    // ms
 
 // --- Creneau de "transmission" (règle Davis/WeeWx/Weatherlink) ---
 // Contrairement a l'ecriture SD (LOG_WRITE_INTERVAL_MS_DEFAULT, plus

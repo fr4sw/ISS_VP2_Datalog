@@ -117,6 +117,21 @@ public:
     bool     getBleEnabled() const;
     void     setBleEnabled(bool enabled);
 
+    // Delai (ms) laisse au T114 pour demarrer sa pile logicielle apres
+    // mise sous tension, avant de lui envoyer la poignee de main - voir
+    // Config.h : MESH_POWERON_SETTLE_MS_DEFAULT pour la valeur par defaut
+    // et le detail du compromis.
+    uint32_t getMeshPowerOnSettleMs() const;
+    void     setMeshPowerOnSettleMs(uint32_t settleMs);
+
+    // true = n'envoie PAS ToRadio.want_config_id avant la telemetrie
+    // (experimental - voir MeshLink.cpp : permet de verifier si le T114
+    // accepte un ToRadio.packet direct sans poignee de main prealable, ce
+    // qui eviterait le dump de configuration complet declenche par
+    // want_config_id). false (defaut) = comportement habituel.
+    bool     getMeshSkipHandshake() const;
+    void     setMeshSkipHandshake(bool skip);
+
 private:
     void load();
 
@@ -129,6 +144,8 @@ private:
     bool     meshUtc;
     uint32_t issAverageFrameIntervalMs;
     bool     bleEnabled;
+    uint32_t meshPowerOnSettleMs;
+    bool     meshSkipHandshake;
 };
 
 extern Params params;

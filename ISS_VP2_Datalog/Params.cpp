@@ -100,6 +100,14 @@ static void applyParamLine(const char line[])
     {
         params.setBleEnabled(value != 0);
     }
+    else if (strcmp(key, "MESHPOWERONMS") == 0)
+    {
+        params.setMeshPowerOnSettleMs((uint32_t)value);
+    }
+    else if (strcmp(key, "MESHSKIPHANDSHAKE") == 0)
+    {
+        params.setMeshSkipHandshake(value != 0);
+    }
     else
     {
         Serial.print(F("[Params] Avertissement : cle inconnue ignoree : "));
@@ -114,10 +122,12 @@ void Params::begin()
     gpsBaudRate = UART_GPS_BAUD;
     meshBaudRate = MESH_BAUD_DEFAULT;
     gpsMinSatellites = GPS_MINIMUM_SATELLITES;
-    dataloggerUtc = false;
-    meshUtc = false;
+    dataloggerUtc = DATALOGGER_UTC_DEFAULT;
+    meshUtc = MESH_UTC_DEFAULT;
     issAverageFrameIntervalMs = 0;   // 0 = pas encore mesure, voir Params.h
-    bleEnabled = true;
+    bleEnabled = BLE_ENABLED_DEFAULT;
+    meshPowerOnSettleMs = MESH_POWERON_SETTLE_MS_DEFAULT;
+    meshSkipHandshake = MESH_SKIP_HANDSHAKE_DEFAULT;
 
     load();
 
@@ -138,7 +148,11 @@ void Params::begin()
     Serial.print(F(", ISSAVGINTERVALMS = "));
     Serial.print(issAverageFrameIntervalMs);
     Serial.print(F(", BLEENABLED = "));
-    Serial.println(bleEnabled);
+    Serial.print(bleEnabled);
+    Serial.print(F(", MESHPOWERONMS = "));
+    Serial.print(meshPowerOnSettleMs);
+    Serial.print(F(", MESHSKIPHANDSHAKE = "));
+    Serial.println(meshSkipHandshake);
 }
 
 void Params::load()
@@ -211,6 +225,10 @@ void Params::save()
     paramsFile.println(issAverageFrameIntervalMs);
     paramsFile.print(F("BLEENABLED="));
     paramsFile.println(bleEnabled ? 1 : 0);
+    paramsFile.print(F("MESHPOWERONMS="));
+    paramsFile.println(meshPowerOnSettleMs);
+    paramsFile.print(F("MESHSKIPHANDSHAKE="));
+    paramsFile.println(meshSkipHandshake ? 1 : 0);
     paramsFile.flush();
     paramsFile.close();
 
@@ -306,4 +324,24 @@ bool Params::getBleEnabled() const
 void Params::setBleEnabled(bool enabled)
 {
     bleEnabled = enabled;
+}
+
+uint32_t Params::getMeshPowerOnSettleMs() const
+{
+    return meshPowerOnSettleMs;
+}
+
+void Params::setMeshPowerOnSettleMs(uint32_t settleMs)
+{
+    meshPowerOnSettleMs = settleMs;
+}
+
+bool Params::getMeshSkipHandshake() const
+{
+    return meshSkipHandshake;
+}
+
+void Params::setMeshSkipHandshake(bool skip)
+{
+    meshSkipHandshake = skip;
 }
