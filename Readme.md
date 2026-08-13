@@ -24,13 +24,16 @@ On écrit aussi un EVENTS.log qui récapitule les évènements principaux (dont 
 -> release v0.1.3
 
 La prochaine étape est l'implantation du Meshtastic en protobuff simplifié.
+-> 13/8/26 globalement validé, les infos remontent mais timing à consolider
+
+En cours : automatisation du capteur I2C interne pour supporter/reconaitre automatiquement BME680, BME280, BMP280 ...
 
 # 2. Contexte
 Ce projet a été utilisé plusieurs années comme projet de fin d'étude en BTS Systèmes numériques/CIEL Electronique en partenariat avec l'association MeteoR-OI.
 
 # 3. Pré-requis - versions
 Testé :
-IDE/Core : Arduino IDE portable 1.8.19, core Seed nRF52 Boards 1.1.13, core ESP32 3.2.0-\>3.3.11
+IDE/Core : Arduino IDE portable 1.8.19, core Seed nRF52 Boards 1.1.13, core ESP32 3.2.0-\>3.3.11 (Wire et SD sont utilisés mais elles sont incluses dans les Cores)
 Librairies : 
 - BME680 Adafruit (2.0.6) (Adafruit BusIO 1.17.4, Adafruit unified sensors 1.1.15) https://github.com/adafruit/Adafruit_BME680
 - RTClib Adafruit (2.1.4) https://github.com/adafruit/RTClib
