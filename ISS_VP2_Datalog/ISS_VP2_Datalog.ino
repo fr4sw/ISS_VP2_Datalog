@@ -80,9 +80,12 @@ void setup()
 #if USE_WIFI_IHM
     wifiPortal.begin();
 #endif
-#if USE_BME680
+/*#if USE_BME680
     bmeIndoor.begin();
 #endif
+*/
+    indoorSensor.begin();
+    
 #if USE_BLE
     if (params.getBleEnabled() == true)
     {
@@ -128,7 +131,7 @@ void loop()
     }
 #endif
 
-#if USE_BME680
+/*#if USE_BME680
     bmeIndoor.update();
     IndoorData indoorData;
     bool indoorDataValid = bmeIndoor.getData(indoorData);
@@ -137,6 +140,19 @@ void loop()
         dataLogger.updateIndoorData(indoorData);
     }
 #endif
+*/
+#if USE_INDOOR_SENSOR
+    indoorSensor.update();
+
+    IndoorData indoorData;
+    bool indoorDataValid = indoorSensor.getData(indoorData);
+
+    if (indoorDataValid == true)
+    {
+        dataLogger.updateIndoorData(indoorData);
+    }
+#endif
+
 
     IssRawFrame rawFrame;
     bool frameReceived = false;

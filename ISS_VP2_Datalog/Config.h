@@ -37,7 +37,8 @@
 #define USE_SD_CARD    1
 #define USE_WIFI_IHM   0
 #define USE_OTA        0
-#define USE_BME680     1         // capteur temp, Hum, pression interne (et gaz eventuellement)
+//#define USE_BME680     1         // capteur temp, Hum, pression interne (et gaz eventuellement)
+#define USE_INDOOR_SENSOR 1
 #define USE_MESHTASTIC 1         // liaison serie vers un appareil Meshtastic (T114), voir MeshLink.h
 #define USE_BLE        1         // annonce BLE minimale (donnees courantes en lecture seule pour une
                                   // appli generique type nRF Connect/LightBlue, pas d'appli dediee),

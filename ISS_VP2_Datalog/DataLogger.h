@@ -51,7 +51,8 @@
 #include <Arduino.h>
 #include <SD.h>
 #include "IssCommon.h"
-#include "BmeIndoor.h"
+//#include "BmeIndoor.h"
+#include "IndoorSensor.h"
 
 class DataLogger
 {
