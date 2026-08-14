@@ -83,6 +83,20 @@ void IndoorSensor::begin()
         if (sensorInfo.i2cAddress < 0x10) Serial.print('0');
         Serial.println(sensorInfo.i2cAddress, HEX);
     }
+    else if (sensorInfo.type == INDOOR_SENSOR_BMP280)
+        {
+        if (bmp280Sensor.begin(Wire, sensorInfo.i2cAddress) == false)
+        {
+            Serial.println(F("[IndoorSensor] Erreur initialisation BMP280"));
+            return;
+        }
+
+        sensorReady = true;
+
+        Serial.print(F("[IndoorSensor] BMP280 initialise a 0x"));
+        if (sensorInfo.i2cAddress < 0x10) Serial.print('0');
+        Serial.println(sensorInfo.i2cAddress, HEX);
+    }
 }
 
 void IndoorSensor::update()
@@ -154,6 +168,85 @@ void IndoorSensor::update()
         measurementState = STATE_IDLE;
         return;
     }
+// -------------------------------------------------------------------------
+// BMP280 : pression + température.
+// -------------------------------------------------------------------------
+
+    if (sensorInfo.type == INDOOR_SENSOR_BMP280)
+    {
+        if (measurementState == STATE_IDLE)
+        {
+            unsigned long elapsedMillis =
+                millis() - lastMeasurementStartMillis;
+
+            if (elapsedMillis < BME680_READ_INTERVAL_MS)
+            {
+                return;
+            }
+
+            if (bmp280Sensor.startMeasurement() == false)
+            {
+                Serial.println(
+                    F("[IndoorSensor] Erreur : demarrage mesure BMP280"));
+                return;
+            }
+
+            lastMeasurementStartMillis = millis();
+            measurementState = STATE_MEASURING;
+            return;
+        }
+
+        if (bmp280Sensor.measurementDone() == false)
+        {
+            return;
+        }
+
+        Bmp280Data bmpData;
+
+        if (bmp280Sensor.readMeasurement(bmpData) == false)
+        {
+            Serial.println(
+                F("[IndoorSensor] Erreur : lecture BMP280 invalide"));
+
+            lastData.dataValid = false;
+            measurementState = STATE_IDLE;
+            return;
+        }
+
+        lastData.temperatureIndoor =
+            bmpData.temperature;
+
+        lastData.pressureIndoor =
+            bmpData.pressure;
+
+        // Le BMP280 ne possède pas de capteur d'humidité.
+        lastData.humidityIndoor = 0.0f;
+
+        lastData.temperatureValid =
+            bmpData.temperatureValid;
+
+        lastData.pressureValid =
+            bmpData.pressureValid;
+
+        lastData.humidityValid = false;
+
+        lastData.dataValid =
+            lastData.temperatureValid &&
+            lastData.pressureValid;
+
+#if DEBUG
+    Serial.print(F("[IndoorSensor] BMP280 - Temp : "));
+    Serial.print(lastData.temperatureIndoor, 1);
+    Serial.print(F(" C / Pression : "));
+    Serial.print(lastData.pressureIndoor, 1);
+    Serial.println(F(" hPa"));
+#endif
+
+    measurementState = STATE_IDLE;
+    return;
+}
+
+
 
     // -------------------------------------------------------------------------
     // BME680 : comportement conservé de la phase 1.
@@ -282,7 +375,7 @@ bool IndoorSensor::detectSensor()
                     INDOOR_SENSOR_BMP280, "BMP280", address,
                     INDOOR_CAP_PRESSURE |
                     INDOOR_CAP_TEMPERATURE,
-                    false);
+                    true);
                 return true;
             }
         }

@@ -14,6 +14,7 @@
 #include "Config.h"
 #include "IndoorSensorTypes.h"
 #include "Bme280Driver.h"
+#include "Bmp280Driver.h"
 
 class IndoorSensor
 {
@@ -43,6 +44,7 @@ private:
 
     Adafruit_BME680 bme680Sensor;
     Bme280Driver bme280Sensor;
+    Bmp280Driver bmp280Sensor;
 
     IndoorSensorInfo sensorInfo;
     IndoorData lastData;
