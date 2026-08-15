@@ -259,7 +259,7 @@
 #define DEBUG_RAW_FRAMES   1   // 1 = affiche chaque trame brute recue en
                                 // hexadecimal avant decodage, 0 = production
 
-#define DEBUG_GPS          1   // 1 = affiche uniquement l'heure UTC et le
+#define DEBUG_GPS          0   // 1 = affiche uniquement l'heure UTC et le
                                 // nombre de satellites decodes par le GPS
                                 // (le flux NMEA complet est trop volumineux
                                 // pour DEBUG_RAW_FRAMES), 0 = production
