@@ -28,25 +28,63 @@
 static const uint8_t MESHTASTIC_FRAME_START1 = 0x94;
 static const uint8_t MESHTASTIC_FRAME_START2 = 0xC3;
 
-// Alias local pour la lisibilite du reste de ce fichier (voir MeshLink.h
-// pour la definition et le detail des valeurs speciales).
-static const uint32_t MESH_WANT_CONFIG_NONCE = MESHTASTIC_SPECIAL_NONCE_ONLY_CONFIG;
+// ============================================================================
+// Machine a etats de session Meshtastic.
+//
+// La session est entierement non bloquante apres le retour de
+// meshLinkSendEnvironmentTelemetry(). Les etats sont :
+//
+//   MESH_STATE_POWER_ON_SETTLE
+//       alimentation du T114 + attente de demarrage
+//
+//   MESH_STATE_WAIT_WAKE_QUEUE
+//       un heartbeat a ete envoye ; un queue_status est attendu.
+//       free == 0 est le seul cas qui interdit l'envoi.
+//       Sans reponse apres MESH_WAKE_QUEUE_TIMEOUT_MS, on envoie quand meme.
+//
+//   MESH_STATE_WAIT_TX_STATUS
+//       la telemetrie est envoyee. L'entree de notre paquet est confirmee
+//       par une diminution de free par rapport a la valeur observee juste
+//       avant l'envoi. Un heartbeat est emis toutes les
+//       MESH_HEARTBEAT_INTERVAL_MS. Le timeout global est MESH_TX_TIMEOUT_MS.
+//
+//   MESH_STATE_SHUTDOWN_DELAY
+//       la queue a d'abord diminue apres notre envoi, puis est redevenue
+//       vide (free == maxlen). La coupure est alors programmee
+//       MESH_QUEUE_EMPTY_SHUTDOWN_MS plus tard, sans autre condition.
+// ============================================================================
+enum MeshState
+{
+    MESH_STATE_IDLE,
+    MESH_STATE_POWER_ON_SETTLE,
+    MESH_STATE_WAIT_WAKE_QUEUE,
+    MESH_STATE_WAIT_TX_STATUS,
+    MESH_STATE_SHUTDOWN_DELAY
+};
 
-// Machine a etats minimale pour le cycle "envoi -> attente de confirmation
-// -> coupure" (voir MeshLink.h : meshLinkUpdate()). Pas d'enum dediee pour
-// un simple booleen - un seul envoi a la fois est possible (règle 15).
-static bool          meshWaitingForAck = false;
-static unsigned long meshHoldStartMillis = 0;
-static unsigned long meshHoldDurationMs = 0;
-// ID du paquet de telemetrie actuellement en attente de confirmation (voir
-// MeshtasticTelemetry.h : MESHPACKET_FIELD_ID), pour reconnaitre
-// specifiquement le FromRadio.queue_status qui lui correspond parmi tout
-// le trafic FromRadio (qui peut inclure du relais MQTT ou d'autres nœuds).
+static MeshState meshState = MESH_STATE_IDLE;
+
 static uint32_t      meshSentPacketId = 0;
-// Deux niveaux de confirmation croissants (voir MeshLink.h) :
-static bool          meshQueueEntrySeen = false;    // notre paquet vu ENTRER en file
-static bool          meshQueueDrainSeen = false;    // la file est ENSUITE retombee a vide
-static unsigned long meshLastHeartbeatMillis = 0;    // dernier heartbeat de relance (phase B, voir meshLinkUpdate())
+static bool          meshQueueEntrySeen = false;
+static bool          meshQueueBaselineValid = false;
+static uint32_t      meshQueueFreeBeforeTelemetry = 0;
+static unsigned long meshPowerOnMillis = 0;
+static unsigned long meshWakeStartMillis = 0;
+static unsigned long meshTxStartMillis = 0;
+static unsigned long meshLastHeartbeatMillis = 0;
+static unsigned long meshShutdownStartMillis = 0;
+
+// Donnees de telemetrie conservees entre l'appel du DataLogger et
+// l'emission effective, apres le reveil du T114.
+static uint32_t meshPendingUtcUnixTime = 0;
+static float    meshPendingTemperatureC = 0.0f;
+static float    meshPendingHumidityPercent = 0.0f;
+static float    meshPendingPressureHpa = 0.0f;
+static uint16_t meshPendingWindDirectionDeg = 0;
+static float    meshPendingWindSpeedKph = 0.0f;
+static float    meshPendingWindGustKph = 0.0f;
+static float    meshPendingRainfall1hMm = 0.0f;
+static float    meshPendingRainfall24hMm = 0.0f;
 
 #if DEBUG_MESH
 // Affiche un tampon d'octets en hexadecimal, prefixe par sa direction -
@@ -90,65 +128,6 @@ static void sendFramedToRadio(const uint8_t *toRadioBytes, size_t length)
 }
 
 // Lit UNE trame FromRadio complete depuis Serial2 avant deadlineMillis.
-// Bloquant mais borne - reserve a la poignee de main (performHandshake()),
-// un contexte deja bloquant/court ; meshLinkUpdate() utilise la version non
-// bloquante plus bas (pumpIncomingFrame()). Se resynchronise sur le
-// premier START1 rencontre. Une trame plus grande que bufferCapacity est
-// videe du flux (pour ne pas desynchroniser la lecture suivante) mais
-// signalee en echec : l'appelant doit retenter.
-static bool readOneFrameBlocking(uint8_t *payloadBuffer, size_t bufferCapacity, uint16_t &payloadLength, unsigned long deadlineMillis)
-{
-    while (true)
-    {
-        if (millis() >= deadlineMillis) { return false; }
-        if (Serial2.available() == 0) { continue; }
-        if ((uint8_t)Serial2.read() == MESHTASTIC_FRAME_START1) { break; }
-    }
-    while (true)
-    {
-        if (millis() >= deadlineMillis) { return false; }
-        if (Serial2.available() == 0) { continue; }
-        if ((uint8_t)Serial2.read() == MESHTASTIC_FRAME_START2) { break; }
-        return false;   // pas START2 juste apres START1 : pas une vraie trame, on abandonne cette tentative
-    }
-
-    uint16_t declaredLength = 0;
-    for (uint8_t byteIndex = 0; byteIndex < 2; byteIndex++)
-    {
-        while (Serial2.available() == 0)
-        {
-            if (millis() >= deadlineMillis) { return false; }
-        }
-        declaredLength = (uint16_t)((declaredLength << 8) | (uint8_t)Serial2.read());
-    }
-
-    if (declaredLength > bufferCapacity)
-    {
-        uint16_t remaining = declaredLength;
-        while (remaining > 0)
-        {
-            if (millis() >= deadlineMillis) { return false; }
-            if (Serial2.available() > 0)
-            {
-                Serial2.read();
-                remaining = remaining - 1;
-            }
-        }
-        return false;
-    }
-
-    for (uint16_t byteIndex = 0; byteIndex < declaredLength; byteIndex++)
-    {
-        while (Serial2.available() == 0)
-        {
-            if (millis() >= deadlineMillis) { return false; }
-        }
-        payloadBuffer[byteIndex] = (uint8_t)Serial2.read();
-    }
-    payloadLength = declaredLength;
-    return true;
-}
-
 // --- Scan protobuf minimal ("sauter les champs inconnus"), PAS un
 // decodeur generique (règle 15) - trois variantes selon ce qu'on cherche,
 // meme logique de saut par-dessus les champs qui ne nous interessent pas.
@@ -288,17 +267,6 @@ static bool findSubMessage(const uint8_t *payload, uint16_t length, uint8_t targ
     return false;
 }
 
-// Construit le message ToRadio "want_config_id" (poignee de main initiale).
-static bool meshBuildWantConfigToRadio(uint8_t *outputBuffer, size_t outputCapacity, size_t &outputLength, uint32_t configId)
-{
-    ProtobufWriter toRadioWriter;
-    toRadioWriter.begin(outputBuffer, outputCapacity);
-    toRadioWriter.writeVarintField(TORADIO_FIELD_WANT_CONFIG_ID, configId);
-
-    outputLength = toRadioWriter.length();
-    return (toRadioWriter.overflowed() == false);
-}
-
 // Construit le message ToRadio "heartbeat" avec un nonce EXPLICITE (voir
 // MeshLink.h : la deduplication Meshtastic exige un nonce different a
 // chaque envoi, jamais 0 ni 1 - voir allocateHeartbeatNonce()).
@@ -340,129 +308,6 @@ static void sendHeartbeat()
     if (built == true)
     {
         sendFramedToRadio(heartbeatBuffer, heartbeatLength);
-    }
-}
-
-// Poignee de main ALLEGEE (MESHSKIPCONFIG=1, defaut - voir Config.h :
-// MESH_SKIP_CONFIG_DEFAULT) : un seul heartbeat, sans jamais demander
-// want_config_id. Etablit un flux protobuf reconnu par le firmware sans
-// l'effet de bord observe avec want_config_id (perte de la connexion
-// Bluetooth du T114 avec le telephone). Attend ensuite soit un
-// queue_status vide (free == maxlen, preuve que le firmware est reactif
-// et sa file d'emission actuellement vide), soit l'expiration du delai -
-// tout ce qui est recu entre-temps est journalise en DEBUG_MESH.
-static void performLightweightWakeup()
-{
-    sendHeartbeat();
-
-    unsigned long wakeupDeadline = millis() + MESH_HANDSHAKE_MAX_WAIT_MS;
-    bool queueEmptySeen = false;
-    uint8_t framePayload[MESH_FRAME_PAYLOAD_MAX_LEN];
-
-    while ((queueEmptySeen == false) && (millis() < wakeupDeadline))
-    {
-        uint16_t frameLength = 0;
-        bool gotFrame = readOneFrameBlocking(framePayload, sizeof(framePayload), frameLength, wakeupDeadline);
-        if (gotFrame == false)
-        {
-            continue;   // trame invalide/trop grande, ou rien reçu : on retente, la boucle verifie deja la deadline
-        }
-
-#if DEBUG_MESH
-        debugPrintFrame("RX (reveil allege)", framePayload, frameLength);
-#endif
-
-        const uint8_t *queueStatusPayload = nullptr;
-        uint16_t       queueStatusLength = 0;
-        bool foundQueueStatus = findSubMessage(framePayload, frameLength, FROMRADIO_FIELD_QUEUE_STATUS,
-                                                queueStatusPayload, queueStatusLength);
-        if (foundQueueStatus == true)
-        {
-            uint32_t freeSlots = 0;
-            uint32_t maxSlots = 0;
-            bool foundFree = findVarintField(queueStatusPayload, queueStatusLength, QUEUESTATUS_FIELD_FREE, freeSlots);
-            bool foundMaxlen = findVarintField(queueStatusPayload, queueStatusLength, QUEUESTATUS_FIELD_MAXLEN, maxSlots);
-            if ((foundFree == true) && (foundMaxlen == true) && (freeSlots == maxSlots))
-            {
-                queueEmptySeen = true;
-            }
-        }
-    }
-
-    if (queueEmptySeen == false)
-    {
-        Serial.println(F("[MeshLink] Avertissement : pas de queue_status vide recu (timeout reveil) - envoi quand meme"));
-        if (Serial) { Serial.flush(); }
-        logEvent(F("Timeout reveil allege Meshtastic"));
-    }
-}
-
-// Poignee de main COMPLETE (MESHSKIPCONFIG=0) : ToRadio.want_config_id,
-// attente du vrai signal de fin (FromRadio.config_complete_id echoant
-// MESH_WANT_CONFIG_NONCE). Le firmware envoie alors plusieurs trames
-// intermediaires (config, NodeInfo...) avant ce signal ; les lire et les
-// jeter une a une est le seul moyen fiable de savoir quand s'arreter.
-// ATTENTION (confirme par l'utilisateur sur materiel reel) : declenche la
-// perte de la connexion Bluetooth du T114 avec le telephone, recuperable
-// seulement en redemarrant le module - voir MESH_SKIP_CONFIG_DEFAULT,
-// Config.h. A n'utiliser que si le dump de configuration est reellement
-// necessaire pour un usage futur (ce projet ne l'exploite pas).
-static void performFullConfigHandshake()
-{
-    uint8_t handshakeBuffer[8];
-    size_t handshakeLength = 0;
-    bool handshakeBuilt = meshBuildWantConfigToRadio(handshakeBuffer, sizeof(handshakeBuffer), handshakeLength, MESH_WANT_CONFIG_NONCE);
-    if (handshakeBuilt == true)
-    {
-        sendFramedToRadio(handshakeBuffer, handshakeLength);
-    }
-
-    unsigned long handshakeDeadline = millis() + MESH_HANDSHAKE_MAX_WAIT_MS;
-    bool configComplete = false;
-    uint8_t framePayload[MESH_FRAME_PAYLOAD_MAX_LEN];
-
-    while ((configComplete == false) && (millis() < handshakeDeadline))
-    {
-        uint16_t frameLength = 0;
-        bool gotFrame = readOneFrameBlocking(framePayload, sizeof(framePayload), frameLength, handshakeDeadline);
-        if (gotFrame == false)
-        {
-            continue;   // trame invalide/trop grande : on retente, la boucle verifie deja la deadline
-        }
-
-#if DEBUG_MESH
-        debugPrintFrame("RX (handshake complet)", framePayload, frameLength);
-#endif
-
-        uint32_t configCompleteId = 0;
-        bool found = findVarintField(framePayload, frameLength, FROMRADIO_FIELD_CONFIG_COMPLETE_ID, configCompleteId);
-        if ((found == true) && (configCompleteId == MESH_WANT_CONFIG_NONCE))
-        {
-            configComplete = true;
-        }
-    }
-
-    if (configComplete == false)
-    {
-        Serial.println(F("[MeshLink] Avertissement : config_complete_id jamais recu (timeout handshake) - envoi quand meme"));
-        if (Serial) { Serial.flush(); }
-        logEvent(F("Timeout poignee de main Meshtastic"));
-    }
-}
-
-// Dispatch selon MESHSKIPCONFIG (voir Params::getMeshSkipConfig()) - AUCUN
-// melange entre les deux chemins (bug corrige : un premier jet envoyait
-// systematiquement un heartbeat AVANT de brancher, ce qui perturbait le
-// chemin "config complete" en plus de ne pas nonce-r ce heartbeat).
-static void performHandshake()
-{
-    if (params.getMeshSkipConfig() == true)
-    {
-        performLightweightWakeup();
-    }
-    else
-    {
-        performFullConfigHandshake();
     }
 }
 
@@ -552,10 +397,64 @@ static void meshShutdown()
     Serial2.end();
     power.disableMesh();
     sharedUartRelease(SHARED_UART_MESH);
-    meshWaitingForAck = false;
+
+    meshState = MESH_STATE_IDLE;
+    meshSentPacketId = 0;
     meshQueueEntrySeen = false;
-    meshQueueDrainSeen = false;
+    meshQueueBaselineValid = false;
+    meshQueueFreeBeforeTelemetry = 0;
+    meshPowerOnMillis = 0;
+    meshWakeStartMillis = 0;
+    meshTxStartMillis = 0;
     meshLastHeartbeatMillis = 0;
+    meshShutdownStartMillis = 0;
+}
+
+// Prepare et envoie la telemetrie conservee apres le reveil.
+// Cette fonction est appelee uniquement depuis meshLinkUpdate(), donc hors
+// du contexte de reservation initiale du bus.
+static bool sendPendingEnvironmentTelemetry()
+{
+    uint8_t telemetryBuffer[128];
+    size_t telemetryLength = 0;
+    uint32_t packetId = 0;
+
+    bool built = meshBuildEnvironmentTelemetryToRadio(
+        telemetryBuffer, sizeof(telemetryBuffer), telemetryLength, packetId,
+        meshPendingUtcUnixTime,
+        meshPendingTemperatureC,
+        meshPendingHumidityPercent,
+        meshPendingPressureHpa,
+        meshPendingWindDirectionDeg,
+        meshPendingWindSpeedKph,
+        meshPendingWindGustKph,
+        meshPendingRainfall1hMm,
+        meshPendingRainfall24hMm);
+
+    if (built == false)
+    {
+        Serial.println(F("[MeshLink] Erreur : message de telemetrie trop volumineux pour le tampon"));
+        if (Serial) { Serial.flush(); }
+        logEvent(F("Erreur : message Meshtastic trop volumineux"));
+        meshShutdown();
+        return false;
+    }
+
+    sendFramedToRadio(telemetryBuffer, telemetryLength);
+
+    meshSentPacketId = packetId;
+    meshQueueEntrySeen = false;
+    meshTxStartMillis = millis();
+    meshLastHeartbeatMillis = meshTxStartMillis;
+    meshState = MESH_STATE_WAIT_TX_STATUS;
+
+    Serial.print(F("[MeshLink] Telemetrie (id "));
+    Serial.print(packetId);
+    Serial.println(F(") envoyee, surveillance de la file pendant 5 s"));
+    if (Serial) { Serial.flush(); }
+    logEvent(F("Telemetrie Meshtastic envoyee, surveillance de la file"));
+
+    return true;
 }
 
 bool meshLinkSendEnvironmentTelemetry(uint32_t utcUnixTime,
@@ -563,13 +462,9 @@ bool meshLinkSendEnvironmentTelemetry(uint32_t utcUnixTime,
                                        uint16_t windDirectionDeg, float windSpeedKph, float windGustKph,
                                        float rainfall1hMm, float rainfall24hMm)
 {
-    if (meshWaitingForAck == true)
+    if (meshState != MESH_STATE_IDLE)
     {
-        // Un envoi precedent est encore en cours (voir meshLinkUpdate()) :
-        // on ne l'interrompt jamais pour en demarrer un nouveau. Comme
-        // MESH_TX_HOLD_MS reste toujours tres inferieur au creneau de
-        // transmission (5 min, voir Config.h), ce cas devrait rester rare.
-        Serial.println(F("[MeshLink] Envoi precedent encore en cours : nouvel envoi differe"));
+        Serial.println(F("[MeshLink] Session precedente encore en cours : nouvel envoi differe"));
         if (Serial) { Serial.flush(); }
         return false;
     }
@@ -582,116 +477,119 @@ bool meshLinkSendEnvironmentTelemetry(uint32_t utcUnixTime,
         return false;
     }
 
+    // Conserve les donnees jusqu'a l'emission effective, qui intervient
+    // apres le reveil non bloquant du T114.
+    meshPendingUtcUnixTime = utcUnixTime;
+    meshPendingTemperatureC = temperatureC;
+    meshPendingHumidityPercent = relativeHumidityPercent;
+    meshPendingPressureHpa = pressureHpa;
+    meshPendingWindDirectionDeg = windDirectionDeg;
+    meshPendingWindSpeedKph = windSpeedKph;
+    meshPendingWindGustKph = windGustKph;
+    meshPendingRainfall1hMm = rainfall1hMm;
+    meshPendingRainfall24hMm = rainfall24hMm;
+
     Serial2.begin(params.getMeshBaudRate());
     power.enableMesh();
     power.disableGps();
 
-    // Laisse au T114 le temps de demarrer sa pile logicielle avant de lui
-    // parler (voir Config.h : MESH_POWERON_SETTLE_MS_DEFAULT / Params).
-    delay(params.getMeshPowerOnSettleMs());
+    meshPowerOnMillis = millis();
+    meshState = MESH_STATE_POWER_ON_SETTLE;
 
-    // performHandshake() dispatche lui-meme entre poignee de main allegee
-    // et complete selon Params::getMeshSkipConfig() (voir plus haut) -
-    // TOUJOURS l'appeler ici, sans re-brancher a ce niveau (bug corrige :
-    // un premier jet dupliquait ce branchement ici, empechant purement et
-    // simplement performLightweightWakeup() de s'executer en mode allege).
-    performHandshake();
-
-    uint8_t telemetryBuffer[128];
-    size_t telemetryLength = 0;
-    uint32_t packetId = 0;
-    bool built = meshBuildEnvironmentTelemetryToRadio(telemetryBuffer, sizeof(telemetryBuffer), telemetryLength, packetId,
-                                                        utcUnixTime, temperatureC, relativeHumidityPercent, pressureHpa,
-                                                        windDirectionDeg, windSpeedKph, windGustKph, rainfall1hMm, rainfall24hMm);
-
-    if (built == false)
-    {
-        Serial.println(F("[MeshLink] Erreur : message de telemetrie trop volumineux pour le tampon"));
-        if (Serial) { Serial.flush(); }
-        logEvent(F("Erreur : message Meshtastic trop volumineux"));
-        meshShutdown();
-        return false;
-    }
-
-    sendFramedToRadio(telemetryBuffer, telemetryLength);
-    Serial.print(F("[MeshLink] Telemetrie (id "));
-    Serial.print(packetId);
-    Serial.println(F(") ecrite sur l'UART, attente de confirmation du T114..."));
+    Serial.println(F("[MeshLink] T114 sous tension : attente demarrage"));
     if (Serial) { Serial.flush(); }
-    logEvent(F("Telemetrie ecrite vers Meshtastic, attente confirmation"));
 
-    // Alimentation VOLONTAIREMENT maintenue (voir MeshLink.h) : ecrire les
-    // octets sur l'UART ne signifie pas que le T114 a fini de les emettre
-    // sur le reseau radio. La coupure se fait dans meshLinkUpdate().
-    meshSentPacketId = packetId;
-    meshQueueEntrySeen = false;
-    meshQueueDrainSeen = false;
-    meshLastHeartbeatMillis = 0;
-    meshWaitingForAck = true;
-    meshHoldStartMillis = millis();
-    meshHoldDurationMs = MESH_TX_HOLD_MS;
     return true;
 }
 
 void meshLinkUpdate()
 {
-    if (meshWaitingForAck == false)
+    if (meshState == MESH_STATE_IDLE)
     {
         return;
     }
 
-    // Phase B (voir MeshLink.h) : une fois notre paquet confirme en file
-    // (meshQueueEntrySeen), le firmware ne pousse PAS de queue_status
-    // spontanement quand la file est vide (confirme par l'utilisateur :
-    // aucune trame observee en l'absence d'evenement) - il faut donc le
-    // solliciter activement, avec un nonce DIFFERENT a chaque envoi (voir
-    // allocateHeartbeatNonce() : la deduplication Meshtastic ignorerait
-    // sinon toute relance identique a la precedente). Rien n'est envoye
-    // avant que l'entree en file soit confirmee (phase A, ecoute passive
-    // uniquement) ni une fois la vidange deja constatee.
-    if ((meshQueueEntrySeen == true) && (meshQueueDrainSeen == false)
-        && ((millis() - meshLastHeartbeatMillis) >= MESH_POST_ENTRY_HEARTBEAT_INTERVAL_MS))
+    // ------------------------------------------------------------------------
+    // Etat 1 : laisser le T114 demarrer sans bloquer loop().
+    // ------------------------------------------------------------------------
+    if (meshState == MESH_STATE_POWER_ON_SETTLE)
     {
+        if ((millis() - meshPowerOnMillis) < params.getMeshPowerOnSettleMs())
+        {
+            return;
+        }
+
+        // Reveil par heartbeat. Le nonce est global a toutes les sessions
+        // et continue donc a s'incrementer d'une emission a la suivante.
         sendHeartbeat();
-        meshLastHeartbeatMillis = millis();
+        meshWakeStartMillis = millis();
+        meshQueueBaselineValid = false;
+        meshQueueFreeBeforeTelemetry = 0;
+        meshState = MESH_STATE_WAIT_WAKE_QUEUE;
+
+        Serial.println(F("[MeshLink] Heartbeat de reveil envoye : attente queue_status"));
+        if (Serial) { Serial.flush(); }
+        return;
     }
 
-    // Assemble les trames qui arrivent, une par appel au plus (non
-    // bloquant - rattrape au prochain appel si plusieurs arrivent dans le
-    // meme intervalle de loop()). Chaque trame est confrontee a
-    // FromRadio.queue_status (voir MeshLink.h pour la structure verifiee) :
-    // un mesh_packet_id correspondant a NOTRE dernier envoi confirme que
-    // le T114 l'a bien mis en file d'emission ; un QueueStatus SANS ce
-    // champ (free == maxlen) apres cette premiere confirmation signifie
-    // que la file est retombee a vide - la meilleure preuve disponible que
-    // notre paquet en est reellement reparti.
+    // ------------------------------------------------------------------------
+    // Etats 2 et 3 : reception des FromRadio.
+    // On ne lit qu'une trame complete par appel afin de ne jamais bloquer
+    // la boucle principale et la reception RS485.
+    // ------------------------------------------------------------------------
     const uint8_t *framePayload = nullptr;
-    uint16_t       frameLength = 0;
+    uint16_t frameLength = 0;
     bool gotFrame = pumpIncomingFrame(framePayload, frameLength);
+
     if (gotFrame == true)
     {
 #if DEBUG_MESH
-        debugPrintFrame("RX (pendant l'attente)", framePayload, frameLength);
+        debugPrintFrame("RX", framePayload, frameLength);
 #endif
 
         const uint8_t *queueStatusPayload = nullptr;
-        uint16_t       queueStatusLength = 0;
-        bool foundQueueStatus = findSubMessage(framePayload, frameLength, FROMRADIO_FIELD_QUEUE_STATUS,
-                                                queueStatusPayload, queueStatusLength);
+        uint16_t queueStatusLength = 0;
+        bool foundQueueStatus = findSubMessage(
+            framePayload, frameLength, FROMRADIO_FIELD_QUEUE_STATUS,
+            queueStatusPayload, queueStatusLength);
+
         if (foundQueueStatus == true)
         {
             uint32_t freeSlots = 0;
             uint32_t maxSlots = 0;
             uint32_t queuedPacketId = 0;
-            bool foundFree = findVarintField(queueStatusPayload, queueStatusLength, QUEUESTATUS_FIELD_FREE, freeSlots);
-            bool foundMaxlen = findVarintField(queueStatusPayload, queueStatusLength, QUEUESTATUS_FIELD_MAXLEN, maxSlots);
-            bool foundPacketId = findVarintField(queueStatusPayload, queueStatusLength, QUEUESTATUS_FIELD_MESH_PACKET_ID, queuedPacketId);
+
+            bool foundFree = findVarintField(
+                queueStatusPayload, queueStatusLength,
+                QUEUESTATUS_FIELD_FREE, freeSlots);
+            bool foundMaxlen = findVarintField(
+                queueStatusPayload, queueStatusLength,
+                QUEUESTATUS_FIELD_MAXLEN, maxSlots);
+            bool foundPacketId = findVarintField(
+                queueStatusPayload, queueStatusLength,
+                QUEUESTATUS_FIELD_MESH_PACKET_ID, queuedPacketId);
 
 #if DEBUG_MESH
             Serial.print(F("[MeshLink][DEBUG_MESH] queue_status : free="));
-            Serial.print(foundFree ? String(freeSlots) : String("?"));
+            if (foundFree == true)
+            {
+                Serial.print(freeSlots);
+            }
+            else
+            {
+                Serial.print(F("?"));
+            }
+
             Serial.print(F(" maxlen="));
-            Serial.print(foundMaxlen ? String(maxSlots) : String("?"));
+            if (foundMaxlen == true)
+            {
+                Serial.print(maxSlots);
+            }
+            else
+            {
+                Serial.print(F("?"));
+            }
+
             if (foundPacketId == true)
             {
                 Serial.print(F(" mesh_packet_id="));
@@ -701,53 +599,137 @@ void meshLinkUpdate()
             if (Serial) { Serial.flush(); }
 #endif
 
-            if ((meshQueueEntrySeen == false) && (foundPacketId == true) && (queuedPacketId == meshSentPacketId))
+            // ------------------------------------------------------------
+            // Reveil : seul free == 0 bloque l'envoi.
+            // free > 0 => la telemetrie peut partir immediatement.
+            // ------------------------------------------------------------
+            if (meshState == MESH_STATE_WAIT_WAKE_QUEUE)
+            {
+                if ((foundFree == true) && (freeSlots > 0))
+                {
+                    meshQueueFreeBeforeTelemetry = freeSlots;
+                    meshQueueBaselineValid = true;
+
+                    Serial.print(F("[MeshLink] Wake queue disponible : free="));
+                    Serial.println(freeSlots);
+#if DEBUG_MESH
+                    Serial.print(F("[MeshLink][DEBUG_MESH] Baseline queue avant telemetrie : free="));
+                    Serial.println(meshQueueFreeBeforeTelemetry);
+#endif
+                    if (Serial) { Serial.flush(); }
+
+                    sendPendingEnvironmentTelemetry();
+                    return;
+                }
+
+                if ((foundFree == true) && (freeSlots == 0))
+                {
+                    Serial.println(F("[MeshLink] Wake queue pleine (free=0) : attente liberation"));
+                    if (Serial) { Serial.flush(); }
+                }
+            }
+
+            // ------------------------------------------------------------
+            // Apres envoi : confirmation de l'entree de notre paquet dans
+            // la queue par diminution de free.
+            //
+            // Le chemin de reveil par Heartbeat ne fournit pas toujours
+            // mesh_packet_id. On utilise donc le changement d'etat de la
+            // queue : free doit etre strictement inferieur a la valeur
+            // observee juste avant notre envoi.
+            // ------------------------------------------------------------
+            if ((meshState == MESH_STATE_WAIT_TX_STATUS) &&
+                (meshQueueEntrySeen == false) &&
+                (meshQueueBaselineValid == true) &&
+                (foundFree == true) &&
+                (freeSlots < meshQueueFreeBeforeTelemetry))
             {
                 meshQueueEntrySeen = true;
-                Serial.println(F("[MeshLink] Notre paquet confirme en file d'emission (queue_status)"));
+
+                Serial.print(F("[MeshLink] Entree de notre paquet dans la queue : free "));
+                Serial.print(meshQueueFreeBeforeTelemetry);
+                Serial.print(F(" -> "));
+                Serial.println(freeSlots);
                 if (Serial) { Serial.flush(); }
-                logEvent(F("Telemetrie Meshtastic confirmee en file d'emission"));
-                // Phase B (relance active toutes les MESH_POST_ENTRY_HEARTBEAT_INTERVAL_MS,
-                // voir plus bas) : lui laisser jusqu'a MESH_TX_HOLD_MS pour
-                // converger vers un queue_status vide, pas juste la courte
-                // marge post-confirmation d'un premier jet (MESH_POST_QUEUE_HOLD_MS,
-                // pensee pour un nudge unique, insuffisante pour plusieurs
-                // cycles de relance a 100ms).
-                meshHoldStartMillis = millis();
-                meshHoldDurationMs = MESH_TX_HOLD_MS;
+                logEvent(F("Telemetrie Meshtastic entree dans la queue"));
             }
-            else if ((meshQueueEntrySeen == true) && (meshQueueDrainSeen == false)
-                     && (foundFree == true) && (foundMaxlen == true) && (freeSlots == maxSlots))
+
+            // ------------------------------------------------------------
+            // File redevenue vide APRES avoir constate sa diminution.
+            // Aucun autre critere : arret programme 200 ms plus tard.
+            // ------------------------------------------------------------
+            if ((meshState == MESH_STATE_WAIT_TX_STATUS) &&
+                (meshQueueEntrySeen == true) &&
+                (foundFree == true) &&
+                (foundMaxlen == true) &&
+                (freeSlots == maxSlots))
             {
-                meshQueueDrainSeen = true;
-                Serial.println(F("[MeshLink] File d'emission retombee a vide : notre paquet en est reparti"));
+                meshShutdownStartMillis = millis();
+                meshState = MESH_STATE_SHUTDOWN_DELAY;
+
+                Serial.println(F("[MeshLink] Queue vide apres passage de notre paquet : arret programme dans 200 ms"));
                 if (Serial) { Serial.flush(); }
-                logEvent(F("Telemetrie Meshtastic confirmee repartie de la file"));
-                meshHoldStartMillis = millis();
-                meshHoldDurationMs = MESH_QUEUE_DRAIN_HOLD_MS;
+                logEvent(F("Queue Meshtastic vide apres transmission"));
             }
         }
     }
 
-    // Idiome robuste au retournement de millis() (~49 jours) : ecart
-    // depuis un depart compare a une duree, jamais une echeance absolue.
-    if ((millis() - meshHoldStartMillis) >= meshHoldDurationMs)
+    // ------------------------------------------------------------------------
+    // Etat 2 : timeout du reveil.
+    // Apres ce delai, l'absence de queue_status n'est PAS bloquante.
+    // On envoie quand meme la telemetrie, conformement au protocole choisi.
+    // ------------------------------------------------------------------------
+    if (meshState == MESH_STATE_WAIT_WAKE_QUEUE)
     {
-        if (meshQueueDrainSeen == true)
+        if ((uint32_t)(millis() - meshWakeStartMillis) >= MESH_WAKE_QUEUE_TIMEOUT_MS)
         {
-            Serial.println(F("[MeshLink] Marge post-vidange ecoulee : coupure de l'alimentation Mesh"));
+            Serial.println(F("[MeshLink] Timeout wake queue : aucune information bloquante, envoi de la telemetrie"));
+            if (Serial) { Serial.flush(); }
+            logEvent(F("Timeout wake queue Meshtastic, envoi quand meme"));
+            sendPendingEnvironmentTelemetry();
+            return;
         }
-        else if (meshQueueEntrySeen == true)
+
+        return;
+    }
+
+    // ------------------------------------------------------------------------
+    // Etat 3 : heartbeat periodique, independamment de la presence
+    // ou non de notre packet_id dans queue_status.
+    // ------------------------------------------------------------------------
+    if (meshState == MESH_STATE_WAIT_TX_STATUS)
+    {
+        if ((millis() - meshTxStartMillis) >= MESH_TX_TIMEOUT_MS)
         {
-            Serial.println(F("[MeshLink] Marge post-confirmation ecoulee (sans vidange observee) : coupure de l'alimentation Mesh"));
+            Serial.println(F("[MeshLink] Timeout transmission 5 s : coupure du Mesh"));
+            if (Serial) { Serial.flush(); }
+            logEvent(F("Timeout transmission Meshtastic"));
+            meshShutdown();
+            return;
         }
-        else
+
+        if ((uint32_t)(millis() - meshLastHeartbeatMillis) >= MESH_HEARTBEAT_INTERVAL_MS)
         {
-            Serial.println(F("[MeshLink] Delai ecoule sans confirmation queue_status : coupure de l'alimentation Mesh"));
+            sendHeartbeat();
+            meshLastHeartbeatMillis = millis();
         }
-        if (Serial) { Serial.flush(); }
-        logEvent(F("Fin de la fenetre d'envoi Meshtastic"));
-        meshShutdown();
+
+        return;
+    }
+
+    // ------------------------------------------------------------------------
+    // Etat 4 : la queue est vide ; aucune condition supplementaire n'est
+    // requise. On attend simplement les 200 ms parametrables.
+    // ------------------------------------------------------------------------
+    if (meshState == MESH_STATE_SHUTDOWN_DELAY)
+    {
+        if ((uint32_t)(millis() - meshShutdownStartMillis) >= MESH_QUEUE_EMPTY_SHUTDOWN_MS)
+        {
+            Serial.println(F("[MeshLink] Delai post-queue ecoule : arret du Mesh"));
+            if (Serial) { Serial.flush(); }
+            logEvent(F("Fin de session Meshtastic apres queue vide"));
+            meshShutdown();
+        }
     }
 }
 

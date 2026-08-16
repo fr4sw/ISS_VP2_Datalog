@@ -128,22 +128,15 @@
 // le parametre MESHBAUD (Params) une fois verifie.
 #define MESH_BAUD_DEFAULT           38400UL
 
-// Delai (bloquant, voir MeshLink.cpp) laisse au T114 pour demarrer sa
-// pile logicielle apres mise sous tension, avant de lui parler - un
-// modem qui vient de s'alimenter n'a pas forcement son UART pret
-// immediatement. Valeur par defaut prudente, non mesuree sur ce materiel
-// precis (à ajuster empiriquement si la poignee de main echoue
-// systematiquement au premier essai apres coupure d'alimentation).
-// Egalement disponible en parametre (Params::getMeshPowerOnSettleMs(),
-// console MESHPOWERONMS) pour ajustement sans reprogrammer.
+// Delai laisse au T114 pour demarrer sa pile logicielle apres mise sous
+// tension, avant d'envoyer le heartbeat de reveil. Modifiable via le
+// parametre MESHPOWERONMS.
 #define MESH_POWERON_SETTLE_MS_DEFAULT   1000UL   // ms (1 s)
 
-// Attente MAXIMALE du signal de fin de poignee de main
-// (FromRadio.config_complete_id) avant d'abandonner et d'envoyer quand
-// meme (voir MeshLink.cpp : performHandshake()). Le firmware peut envoyer
-// plusieurs trames intermediaires avant ce signal ; generalement recu en
-// quelques centaines de ms avec MESHTASTIC_SPECIAL_NONCE_ONLY_CONFIG.
-#define MESH_HANDSHAKE_MAX_WAIT_MS   2000UL   // ms (2 s)
+// Timeout d'attente du queue_status apres le heartbeat de reveil.
+// Ce timeout n'est pas bloquant : sans reponse, la telemetrie est envoyee
+// quand meme. Seul free == 0 bloque effectivement l'envoi.
+#define MESH_WAKE_QUEUE_TIMEOUT_MS       2000UL   // ms (2 s)
 
 // Taille max d'une trame FromRadio individuelle lisible par ce projet
 // (voir MeshLink.cpp). Une trame plus grande est videe et ignoree sans
@@ -161,43 +154,25 @@
 // jamais couper une trame normale en plusieurs appels inutilement.
 #define MESH_PUMP_MAX_BYTES_PER_CALL 512
 
-// Duree MAXIMALE de maintien de l'alimentation Mesh apres l'envoi d'un
-// paquet de telemetrie (voir MeshLink.cpp : meshLinkUpdate()) - filet de
-// securite si aucune confirmation FromRadio.queue_status n'est jamais
-// recue pour ce paquet. Non bloquant : n'empeche pas la reception RS485.
-// Un paquet broadcast ne peut pas demander d'accuse de reception au sens
-// Meshtastic ; la seule confirmation fiable disponible est queue_status
-// (voir MESH_QUEUE_DRAIN_HOLD_MS et MESH_POST_ENTRY_HEARTBEAT_INTERVAL_MS
-// ci-dessous, qui permettent generalement de couper bien avant ce delai).
-#define MESH_TX_HOLD_MS              5000UL   // ms (5 s)
+// Timeout GLOBAL apres l'envoi de la telemetrie. A l'expiration, la session
+// est arretee quelle que soit la confirmation recue.
+#define MESH_TX_TIMEOUT_MS                 5000UL   // ms (5 s)
 
-// Cadence de relance par heartbeat APRES confirmation que notre paquet est
-// entre en file d'emission (voir MeshLink.cpp : meshLinkUpdate(), phase B) :
-// le firmware ne pousse pas de queue_status "spontanement" quand la file
-// est vide (confirme par l'utilisateur : aucune trame observee en l'absence
-// d'evenement) - il faut donc le solliciter activement pour savoir quand
-// notre paquet en est reparti, plutot que d'attendre passivement.
-#define MESH_POST_ENTRY_HEARTBEAT_INTERVAL_MS   100UL   // ms
+// Cadence des heartbeats apres l'envoi de la telemetrie. Le premier heartbeat
+// est emis apres ce delai, puis a nouveau a chaque periode jusqu'a la fin
+// de la session.
+#define MESH_HEARTBEAT_INTERVAL_MS          100UL   // ms
 
-// Defaut du parametre MESHSKIPCONFIG (voir Params::getMeshSkipConfig()) -
-// comme pour tout autre parametre ajustable, le defaut vit ICI (Config.h),
-// jamais code en dur dans Params.cpp.
-// A true (poignee de main allegee, heartbeat seul, sans want_config_id) :
-// confirme par l'utilisateur que demander la configuration complete
-// (want_config_id) fait perdre la connexion Bluetooth du T114 avec le
-// telephone, recuperable seulement en redemarrant le module - ToRadio.
-// want_config_id semble etre interprete par le firmware comme une prise de
-// controle exclusive du nœud, evincant le client BT existant (un seul
-// "client actif" a la fois, cote firmware). Le mode allege n'a pas cet
-// effet secondaire.
+// Parametre conserve pour compatibilite avec les anciennes configurations.
+// La machine a etats Mesh utilise desormais exclusivement le handshake
+// simplifie par Heartbeat ; MESHSKIPCONFIG n'est plus utilise pour choisir
+// une autre sequence de session.
 #define MESH_SKIP_CONFIG_DEFAULT   true
 
-// Duree de maintien ENCORE PLUS COURTE une fois confirme que la file
-// d'emission est retombee a vide (free == maxlen) APRES avoir vu notre
-// paquet y entrer - la meilleure confirmation disponible que notre paquet
-// est reellement parti (transmis ou abandonne), pas juste accepte. Simple
-// marge de secours, pas une vraie attente (voir meshLinkUpdate()).
-#define MESH_QUEUE_DRAIN_HOLD_MS     300UL    // ms
+// Delai entre la detection de queue vide APRES avoir vu notre paquet y
+// entrer et la coupure de l'alimentation Mesh. Aucune autre condition n'est
+// requise pendant ce delai.
+#define MESH_QUEUE_EMPTY_SHUTDOWN_MS       200UL   // ms
 
 // --- Creneau de "transmission" (règle Davis/WeeWx/Weatherlink) ---
 // Contrairement a l'ecriture SD (LOG_WRITE_INTERVAL_MS_DEFAULT, plus
@@ -206,9 +181,8 @@
 // demarrage : cela permet de PREDIRE l'instant de la prochaine
 // transmission, comme le fait WeeWx/Weatherlink. C'est aussi la base du
 // calcul du taux de reception (tauxReceptionPct, voir DataLogger.cpp).
-// MeshLink.h/.cpp existe (premier jet) mais n'est pas encore branche sur
-// ce creneau : voir DataLogger.h remarque 2 pour le point d'integration
-// prevu (colonne creneauTransmission).
+// Le creneau de transmission est pilote par DataLogger ; MeshLink gere
+// uniquement la session serie et la file d'emission du T114.
 #define TRANSMISSION_SLOT_MINUTES   5
 
 // Delai entre 2 trames ISS au-dela duquel on considere qu'au moins une
