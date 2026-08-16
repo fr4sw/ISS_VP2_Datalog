@@ -129,8 +129,8 @@ public:
     // accepte un ToRadio.packet direct sans poignee de main prealable, ce
     // qui eviterait le dump de configuration complet declenche par
     // want_config_id). false (defaut) = comportement habituel.
-    bool     getMeshSkipHandshake() const;
-    void     setMeshSkipHandshake(bool skip);
+    bool     getMeshSkipConfig() const;
+    void     setMeshSkipConfig(bool skip);
 
 private:
     void load();
@@ -145,7 +145,7 @@ private:
     uint32_t issAverageFrameIntervalMs;
     bool     bleEnabled;
     uint32_t meshPowerOnSettleMs;
-    bool     meshSkipHandshake;
+    bool     meshSkipConfig;
 };
 
 extern Params params;

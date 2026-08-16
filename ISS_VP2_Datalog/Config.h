@@ -167,27 +167,30 @@
 // recue pour ce paquet. Non bloquant : n'empeche pas la reception RS485.
 // Un paquet broadcast ne peut pas demander d'accuse de reception au sens
 // Meshtastic ; la seule confirmation fiable disponible est queue_status
-// (voir MESH_POST_QUEUE_HOLD_MS et MESH_QUEUE_DRAIN_HOLD_MS ci-dessous,
-// qui permettent generalement de couper bien avant ce delai).
+// (voir MESH_QUEUE_DRAIN_HOLD_MS et MESH_POST_ENTRY_HEARTBEAT_INTERVAL_MS
+// ci-dessous, qui permettent generalement de couper bien avant ce delai).
 #define MESH_TX_HOLD_MS              5000UL   // ms (5 s)
 
-// Duree de maintien REDUITE une fois confirme, via FromRadio.queue_status,
-// que NOTRE paquet a bien ete accepte en file d'emission cote T114 (voir
-// meshLinkUpdate()) - remplace MESH_TX_HOLD_MS des cet instant. Couvre le
-// temps d'emission radio proprement dit (mise en file != emis), qu'on ne
-// peut pas encore confirmer a ce stade.
-#define MESH_POST_QUEUE_HOLD_MS      1500UL   // ms (1,5 s)
+// Cadence de relance par heartbeat APRES confirmation que notre paquet est
+// entre en file d'emission (voir MeshLink.cpp : meshLinkUpdate(), phase B) :
+// le firmware ne pousse pas de queue_status "spontanement" quand la file
+// est vide (confirme par l'utilisateur : aucune trame observee en l'absence
+// d'evenement) - il faut donc le solliciter activement pour savoir quand
+// notre paquet en est reparti, plutot que d'attendre passivement.
+#define MESH_POST_ENTRY_HEARTBEAT_INTERVAL_MS   100UL   // ms
 
-// Delai avant l'envoi d'un heartbeat de relance si aucune confirmation
-// queue_status n'est encore arrivee (voir MeshLink.cpp : meshLinkUpdate()).
-// Experimental, gain non garanti (le firmware ne repond pas directement a
-// un heartbeat, voir MeshLink.h) mais sans risque.
-#define MESH_HEARTBEAT_NUDGE_DELAY_MS 800UL   // ms
-
-// Defaut du parametre MESHSKIPHANDSHAKE (voir Params::getMeshSkipHandshake()) -
+// Defaut du parametre MESHSKIPCONFIG (voir Params::getMeshSkipConfig()) -
 // comme pour tout autre parametre ajustable, le defaut vit ICI (Config.h),
 // jamais code en dur dans Params.cpp.
-#define MESH_SKIP_HANDSHAKE_DEFAULT   false
+// A true (poignee de main allegee, heartbeat seul, sans want_config_id) :
+// confirme par l'utilisateur que demander la configuration complete
+// (want_config_id) fait perdre la connexion Bluetooth du T114 avec le
+// telephone, recuperable seulement en redemarrant le module - ToRadio.
+// want_config_id semble etre interprete par le firmware comme une prise de
+// controle exclusive du nœud, evincant le client BT existant (un seul
+// "client actif" a la fois, cote firmware). Le mode allege n'a pas cet
+// effet secondaire.
+#define MESH_SKIP_CONFIG_DEFAULT   true
 
 // Duree de maintien ENCORE PLUS COURTE une fois confirme que la file
 // d'emission est retombee a vide (free == maxlen) APRES avoir vu notre

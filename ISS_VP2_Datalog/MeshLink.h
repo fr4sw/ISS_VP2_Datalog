@@ -58,6 +58,16 @@
 #define TORADIO_FIELD_WANT_CONFIG_ID   3   // uint32, demarre la poignee de main
 #define TORADIO_FIELD_HEARTBEAT        7   // Heartbeat (sous-message, voir ci-dessous)
 
+// --- meshtastic/mesh.proto : message Heartbeat ---
+// Structure VERIFIEE octet par octet par l'utilisateur : message Heartbeat
+// { uint32 nonce = 1; }. Meshtastic dedoublonne les Heartbeat identiques
+// (meme nonce, ou repeter le meme message vide) : un nonce DIFFERENT est
+// OBLIGATOIRE a chaque envoi, sous peine que le message soit purement et
+// simplement ignore. La valeur 1 a un sens special (force la diffusion du
+// NodeInfo du nœud sur le mesh, hors-sujet ici) : le compteur utilise par
+// ce projet demarre a 2 et saute 0/1 (voir MeshLink.cpp).
+#define HEARTBEAT_FIELD_NONCE          1   // uint32 (varint) - JAMAIS 0 ni 1
+
 // Valeurs SPECIALES de want_config_id (donc de FromRadio.config_complete_id
 // en retour, qui l'echo tel quel) - le firmware bifurque son comportement
 // selon la valeur exacte envoyee, ce n'est pas un simple jeton opaque :

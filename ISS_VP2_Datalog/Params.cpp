@@ -104,9 +104,9 @@ static void applyParamLine(const char line[])
     {
         params.setMeshPowerOnSettleMs((uint32_t)value);
     }
-    else if (strcmp(key, "MESHSKIPHANDSHAKE") == 0)
+    else if (strcmp(key, "MESHSKIPCONFIG") == 0)
     {
-        params.setMeshSkipHandshake(value != 0);
+        params.setMeshSkipConfig(value != 0);
     }
     else
     {
@@ -127,7 +127,7 @@ void Params::begin()
     issAverageFrameIntervalMs = 0;   // 0 = pas encore mesure, voir Params.h
     bleEnabled = BLE_ENABLED_DEFAULT;
     meshPowerOnSettleMs = MESH_POWERON_SETTLE_MS_DEFAULT;
-    meshSkipHandshake = MESH_SKIP_HANDSHAKE_DEFAULT;
+    meshSkipConfig = MESH_SKIP_CONFIG_DEFAULT;
 
     load();
 
@@ -151,8 +151,8 @@ void Params::begin()
     Serial.print(bleEnabled);
     Serial.print(F(", MESHPOWERONMS = "));
     Serial.print(meshPowerOnSettleMs);
-    Serial.print(F(", MESHSKIPHANDSHAKE = "));
-    Serial.println(meshSkipHandshake);
+    Serial.print(F(", MESHSKIPCONFIG = "));
+    Serial.println(meshSkipConfig);
 }
 
 void Params::load()
@@ -227,8 +227,8 @@ void Params::save()
     paramsFile.println(bleEnabled ? 1 : 0);
     paramsFile.print(F("MESHPOWERONMS="));
     paramsFile.println(meshPowerOnSettleMs);
-    paramsFile.print(F("MESHSKIPHANDSHAKE="));
-    paramsFile.println(meshSkipHandshake ? 1 : 0);
+    paramsFile.print(F("MESHSKIPCONFIG="));
+    paramsFile.println(meshSkipConfig ? 1 : 0);
     paramsFile.flush();
     paramsFile.close();
 
@@ -336,12 +336,12 @@ void Params::setMeshPowerOnSettleMs(uint32_t settleMs)
     meshPowerOnSettleMs = settleMs;
 }
 
-bool Params::getMeshSkipHandshake() const
+bool Params::getMeshSkipConfig() const
 {
-    return meshSkipHandshake;
+    return meshSkipConfig;
 }
 
-void Params::setMeshSkipHandshake(bool skip)
+void Params::setMeshSkipConfig(bool skip)
 {
-    meshSkipHandshake = skip;
+    meshSkipConfig = skip;
 }

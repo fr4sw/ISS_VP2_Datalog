@@ -11,6 +11,7 @@
 //             faire cesser ce mode texte avant de parler protobuf.
 // ============================================================================
 #include "MeshLink.h"
+#include "Config.h"
 
 #if USE_MESHTASTIC
 
@@ -45,7 +46,7 @@ static uint32_t      meshSentPacketId = 0;
 // Deux niveaux de confirmation croissants (voir MeshLink.h) :
 static bool          meshQueueEntrySeen = false;    // notre paquet vu ENTRER en file
 static bool          meshQueueDrainSeen = false;    // la file est ENSUITE retombee a vide
-static bool          meshNudgeSent = false;          // heartbeat de relance deja envoye pour cet envoi
+static unsigned long meshLastHeartbeatMillis = 0;    // dernier heartbeat de relance (phase B, voir meshLinkUpdate())
 
 #if DEBUG_MESH
 // Affiche un tampon d'octets en hexadecimal, prefixe par sa direction -
@@ -298,51 +299,116 @@ static bool meshBuildWantConfigToRadio(uint8_t *outputBuffer, size_t outputCapac
     return (toRadioWriter.overflowed() == false);
 }
 
-// Construit le message ToRadio "heartbeat" - sous-message VOLONTAIREMENT
-// vide (voir MeshLink.h : le firmware n'exploite pas son contenu).
-static bool meshBuildHeartbeatToRadio(uint8_t *outputBuffer, size_t outputCapacity, size_t &outputLength)
+// Construit le message ToRadio "heartbeat" avec un nonce EXPLICITE (voir
+// MeshLink.h : la deduplication Meshtastic exige un nonce different a
+// chaque envoi, jamais 0 ni 1 - voir allocateHeartbeatNonce()).
+static bool meshBuildHeartbeatToRadio(uint8_t *outputBuffer, size_t outputCapacity, size_t &outputLength, uint32_t nonce)
 {
+    uint8_t heartbeatBuffer[8];
+    ProtobufWriter heartbeatWriter;
+    heartbeatWriter.begin(heartbeatBuffer, sizeof(heartbeatBuffer));
+    heartbeatWriter.writeVarintField(HEARTBEAT_FIELD_NONCE, nonce);
+
     ProtobufWriter toRadioWriter;
     toRadioWriter.begin(outputBuffer, outputCapacity);
-    toRadioWriter.writeBytesField(TORADIO_FIELD_HEARTBEAT, nullptr, 0);
+    toRadioWriter.writeBytesField(TORADIO_FIELD_HEARTBEAT, heartbeatWriter.data(), heartbeatWriter.length());
 
     outputLength = toRadioWriter.length();
-    return (toRadioWriter.overflowed() == false);
+    return ((toRadioWriter.overflowed() == false) && (heartbeatWriter.overflowed() == false));
 }
 
-// Envoie la poignee de main et attend le signal de fin
-// (FromRadio.config_complete_id echoant MESH_WANT_CONFIG_NONCE). Le
-// firmware peut envoyer plusieurs trames intermediaires avant ce signal ;
-// les lire et les jeter une a une est le seul moyen fiable de savoir
-// quand s'arreter. Attente bornee par MESH_HANDSHAKE_MAX_WAIT_MS
-// (Config.h) : acceptable ici, Serial2 est un UART materiel independant
-// du RS485 (Serial1), cette attente ne retarde jamais la reception ISS.
-static void performHandshake()
+// Alloue un nonce de heartbeat UNIQUE a chaque appel : 0 et 1 sont
+// specialement interpretes par le firmware (voir MeshLink.h) - la sequence
+// utilisee ici demarre a 2 et incremente, ne revenant jamais sur 0/1 meme
+// en cas de retournement du compteur (situation purement theorique : il
+// faudrait ~4 milliards d'envois).
+static uint32_t nextHeartbeatNonce = 2;
+static uint32_t allocateHeartbeatNonce()
 {
-    // Heartbeat envoye EN PREMIER, systematiquement : plus leger que
-    // want_config_id (pas de dump de configuration declenche cote
-    // firmware), suffit a lui faire reconnaitre un flux protobuf valide
-    // (voir MeshLink.h). N'attend aucune reponse : le firmware ne
-    // repond jamais a un heartbeat (confirme sur le code source).
-    uint8_t heartbeatBuffer[4];
+    uint32_t nonce = nextHeartbeatNonce;
+    nextHeartbeatNonce = nextHeartbeatNonce + 1;
+    if (nextHeartbeatNonce < 2) { nextHeartbeatNonce = 2; }
+    return nonce;
+}
+
+static void sendHeartbeat()
+{
+    uint32_t nonce = allocateHeartbeatNonce();
+    uint8_t heartbeatBuffer[8];
     size_t heartbeatLength = 0;
-    bool heartbeatBuilt = meshBuildHeartbeatToRadio(heartbeatBuffer, sizeof(heartbeatBuffer), heartbeatLength);
-    if (heartbeatBuilt == true)
+    bool built = meshBuildHeartbeatToRadio(heartbeatBuffer, sizeof(heartbeatBuffer), heartbeatLength, nonce);
+    if (built == true)
     {
         sendFramedToRadio(heartbeatBuffer, heartbeatLength);
     }
+}
 
-    if (params.getMeshSkipHandshake() == true)
+// Poignee de main ALLEGEE (MESHSKIPCONFIG=1, defaut - voir Config.h :
+// MESH_SKIP_CONFIG_DEFAULT) : un seul heartbeat, sans jamais demander
+// want_config_id. Etablit un flux protobuf reconnu par le firmware sans
+// l'effet de bord observe avec want_config_id (perte de la connexion
+// Bluetooth du T114 avec le telephone). Attend ensuite soit un
+// queue_status vide (free == maxlen, preuve que le firmware est reactif
+// et sa file d'emission actuellement vide), soit l'expiration du delai -
+// tout ce qui est recu entre-temps est journalise en DEBUG_MESH.
+static void performLightweightWakeup()
+{
+    sendHeartbeat();
+
+    unsigned long wakeupDeadline = millis() + MESH_HANDSHAKE_MAX_WAIT_MS;
+    bool queueEmptySeen = false;
+    uint8_t framePayload[MESH_FRAME_PAYLOAD_MAX_LEN];
+
+    while ((queueEmptySeen == false) && (millis() < wakeupDeadline))
     {
-        // Experimental (voir Params::getMeshSkipHandshake()) : on s'arrete
-        // au heartbeat, sans le dump de configuration complet. A verifier
-        // via l'apparition (ou non) d'un queue_status pour notre paquet
-        // de telemetrie envoye juste apres.
-        Serial.println(F("[MeshLink] MESHSKIPHANDSHAKE actif : heartbeat seul, pas de want_config_id"));
-        if (Serial) { Serial.flush(); }
-        return;
+        uint16_t frameLength = 0;
+        bool gotFrame = readOneFrameBlocking(framePayload, sizeof(framePayload), frameLength, wakeupDeadline);
+        if (gotFrame == false)
+        {
+            continue;   // trame invalide/trop grande, ou rien reçu : on retente, la boucle verifie deja la deadline
+        }
+
+#if DEBUG_MESH
+        debugPrintFrame("RX (reveil allege)", framePayload, frameLength);
+#endif
+
+        const uint8_t *queueStatusPayload = nullptr;
+        uint16_t       queueStatusLength = 0;
+        bool foundQueueStatus = findSubMessage(framePayload, frameLength, FROMRADIO_FIELD_QUEUE_STATUS,
+                                                queueStatusPayload, queueStatusLength);
+        if (foundQueueStatus == true)
+        {
+            uint32_t freeSlots = 0;
+            uint32_t maxSlots = 0;
+            bool foundFree = findVarintField(queueStatusPayload, queueStatusLength, QUEUESTATUS_FIELD_FREE, freeSlots);
+            bool foundMaxlen = findVarintField(queueStatusPayload, queueStatusLength, QUEUESTATUS_FIELD_MAXLEN, maxSlots);
+            if ((foundFree == true) && (foundMaxlen == true) && (freeSlots == maxSlots))
+            {
+                queueEmptySeen = true;
+            }
+        }
     }
 
+    if (queueEmptySeen == false)
+    {
+        Serial.println(F("[MeshLink] Avertissement : pas de queue_status vide recu (timeout reveil) - envoi quand meme"));
+        if (Serial) { Serial.flush(); }
+        logEvent(F("Timeout reveil allege Meshtastic"));
+    }
+}
+
+// Poignee de main COMPLETE (MESHSKIPCONFIG=0) : ToRadio.want_config_id,
+// attente du vrai signal de fin (FromRadio.config_complete_id echoant
+// MESH_WANT_CONFIG_NONCE). Le firmware envoie alors plusieurs trames
+// intermediaires (config, NodeInfo...) avant ce signal ; les lire et les
+// jeter une a une est le seul moyen fiable de savoir quand s'arreter.
+// ATTENTION (confirme par l'utilisateur sur materiel reel) : declenche la
+// perte de la connexion Bluetooth du T114 avec le telephone, recuperable
+// seulement en redemarrant le module - voir MESH_SKIP_CONFIG_DEFAULT,
+// Config.h. A n'utiliser que si le dump de configuration est reellement
+// necessaire pour un usage futur (ce projet ne l'exploite pas).
+static void performFullConfigHandshake()
+{
     uint8_t handshakeBuffer[8];
     size_t handshakeLength = 0;
     bool handshakeBuilt = meshBuildWantConfigToRadio(handshakeBuffer, sizeof(handshakeBuffer), handshakeLength, MESH_WANT_CONFIG_NONCE);
@@ -365,7 +431,7 @@ static void performHandshake()
         }
 
 #if DEBUG_MESH
-        debugPrintFrame("RX (handshake)", framePayload, frameLength);
+        debugPrintFrame("RX (handshake complet)", framePayload, frameLength);
 #endif
 
         uint32_t configCompleteId = 0;
@@ -381,6 +447,22 @@ static void performHandshake()
         Serial.println(F("[MeshLink] Avertissement : config_complete_id jamais recu (timeout handshake) - envoi quand meme"));
         if (Serial) { Serial.flush(); }
         logEvent(F("Timeout poignee de main Meshtastic"));
+    }
+}
+
+// Dispatch selon MESHSKIPCONFIG (voir Params::getMeshSkipConfig()) - AUCUN
+// melange entre les deux chemins (bug corrige : un premier jet envoyait
+// systematiquement un heartbeat AVANT de brancher, ce qui perturbait le
+// chemin "config complete" en plus de ne pas nonce-r ce heartbeat).
+static void performHandshake()
+{
+    if (params.getMeshSkipConfig() == true)
+    {
+        performLightweightWakeup();
+    }
+    else
+    {
+        performFullConfigHandshake();
     }
 }
 
@@ -410,7 +492,7 @@ static bool pumpIncomingFrame(const uint8_t *&payloadOut, uint16_t &lengthOut)
     // ne rendrait alors JAMAIS la main a loop() si le flux arrive plus
     // vite qu'on ne le consomme, gelant toute la carte (console ET
     // reception RS485). Bug reel observe (console figee avec
-    // MESHSKIPHANDSHAKE=1) : les octets restants sont traites au(x)
+    // MESHSKIPCONFIG=1) : les octets restants sont traites au(x)
     // prochain(s) appel(s), rien n'est perdu, juste etale dans le temps.
     uint16_t bytesProcessed = 0;
     while ((Serial2.available() > 0) && (bytesProcessed < MESH_PUMP_MAX_BYTES_PER_CALL))
@@ -473,7 +555,7 @@ static void meshShutdown()
     meshWaitingForAck = false;
     meshQueueEntrySeen = false;
     meshQueueDrainSeen = false;
-    meshNudgeSent = false;
+    meshLastHeartbeatMillis = 0;
 }
 
 bool meshLinkSendEnvironmentTelemetry(uint32_t utcUnixTime,
@@ -508,21 +590,12 @@ bool meshLinkSendEnvironmentTelemetry(uint32_t utcUnixTime,
     // parler (voir Config.h : MESH_POWERON_SETTLE_MS_DEFAULT / Params).
     delay(params.getMeshPowerOnSettleMs());
 
-    // Experimental (voir Params::getMeshSkipHandshake()) : want_config_id
-    // declenche un dump de configuration complet cote firmware (observe :
-    // plusieurs trames, dont une de 136 octets), meme si on n'attend pas
-    // sa fin. Sauter cet envoi permet de verifier si le T114 accepte un
-    // ToRadio.packet direct sans poignee de main prealable - a confirmer
-    // via l'apparition (ou non) d'un queue_status pour notre paquet.
-    if (params.getMeshSkipHandshake() == false)
-    {
-        performHandshake();
-    }
-    else
-    {
-        Serial.println(F("[MeshLink] MESHSKIPHANDSHAKE actif : envoi direct sans want_config_id"));
-        if (Serial) { Serial.flush(); }
-    }
+    // performHandshake() dispatche lui-meme entre poignee de main allegee
+    // et complete selon Params::getMeshSkipConfig() (voir plus haut) -
+    // TOUJOURS l'appeler ici, sans re-brancher a ce niveau (bug corrige :
+    // un premier jet dupliquait ce branchement ici, empechant purement et
+    // simplement performLightweightWakeup() de s'executer en mode allege).
+    performHandshake();
 
     uint8_t telemetryBuffer[128];
     size_t telemetryLength = 0;
@@ -553,7 +626,7 @@ bool meshLinkSendEnvironmentTelemetry(uint32_t utcUnixTime,
     meshSentPacketId = packetId;
     meshQueueEntrySeen = false;
     meshQueueDrainSeen = false;
-    meshNudgeSent = false;
+    meshLastHeartbeatMillis = 0;
     meshWaitingForAck = true;
     meshHoldStartMillis = millis();
     meshHoldDurationMs = MESH_TX_HOLD_MS;
@@ -567,25 +640,20 @@ void meshLinkUpdate()
         return;
     }
 
-    // Relance experimentale (voir MESH_HEARTBEAT_NUDGE_DELAY_MS, Config.h) :
-    // envoie UN heartbeat si aucune confirmation n'est encore arrivee apres
-    // ce delai. Le firmware ne repond jamais directement a un heartbeat
-    // (confirme sur le code source, voir MeshLink.h), mais traiter un
-    // nouveau message ToRadio peut faire boucler son etat interne et
-    // provoquer l'emission d'un queue_status qu'il n'aurait sinon
-    // remonte que plus tard. Gain non garanti, cout nul si ca ne change
-    // rien (un octet de plus dans un flux deja en cours).
-    if ((meshNudgeSent == false) && (meshQueueEntrySeen == false)
-        && ((millis() - meshHoldStartMillis) >= MESH_HEARTBEAT_NUDGE_DELAY_MS))
+    // Phase B (voir MeshLink.h) : une fois notre paquet confirme en file
+    // (meshQueueEntrySeen), le firmware ne pousse PAS de queue_status
+    // spontanement quand la file est vide (confirme par l'utilisateur :
+    // aucune trame observee en l'absence d'evenement) - il faut donc le
+    // solliciter activement, avec un nonce DIFFERENT a chaque envoi (voir
+    // allocateHeartbeatNonce() : la deduplication Meshtastic ignorerait
+    // sinon toute relance identique a la precedente). Rien n'est envoye
+    // avant que l'entree en file soit confirmee (phase A, ecoute passive
+    // uniquement) ni une fois la vidange deja constatee.
+    if ((meshQueueEntrySeen == true) && (meshQueueDrainSeen == false)
+        && ((millis() - meshLastHeartbeatMillis) >= MESH_POST_ENTRY_HEARTBEAT_INTERVAL_MS))
     {
-        uint8_t heartbeatBuffer[4];
-        size_t heartbeatLength = 0;
-        bool heartbeatBuilt = meshBuildHeartbeatToRadio(heartbeatBuffer, sizeof(heartbeatBuffer), heartbeatLength);
-        if (heartbeatBuilt == true)
-        {
-            sendFramedToRadio(heartbeatBuffer, heartbeatLength);
-        }
-        meshNudgeSent = true;
+        sendHeartbeat();
+        meshLastHeartbeatMillis = millis();
     }
 
     // Assemble les trames qui arrivent, une par appel au plus (non
@@ -639,8 +707,14 @@ void meshLinkUpdate()
                 Serial.println(F("[MeshLink] Notre paquet confirme en file d'emission (queue_status)"));
                 if (Serial) { Serial.flush(); }
                 logEvent(F("Telemetrie Meshtastic confirmee en file d'emission"));
+                // Phase B (relance active toutes les MESH_POST_ENTRY_HEARTBEAT_INTERVAL_MS,
+                // voir plus bas) : lui laisser jusqu'a MESH_TX_HOLD_MS pour
+                // converger vers un queue_status vide, pas juste la courte
+                // marge post-confirmation d'un premier jet (MESH_POST_QUEUE_HOLD_MS,
+                // pensee pour un nudge unique, insuffisante pour plusieurs
+                // cycles de relance a 100ms).
                 meshHoldStartMillis = millis();
-                meshHoldDurationMs = MESH_POST_QUEUE_HOLD_MS;
+                meshHoldDurationMs = MESH_TX_HOLD_MS;
             }
             else if ((meshQueueEntrySeen == true) && (meshQueueDrainSeen == false)
                      && (foundFree == true) && (foundMaxlen == true) && (freeSlots == maxSlots))
