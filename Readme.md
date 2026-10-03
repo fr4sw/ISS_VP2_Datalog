@@ -2,7 +2,7 @@
 
 # Readme
 
-Version : 0.1.3 Date : 2026-08-04
+Version : 0.1.6c Date : 2026-08-13
 
 Rédacteur : Rémi Chapdelaine
 
@@ -15,16 +15,13 @@ Ce projet a vocation a utiliser directement l'ISS (ensemble de capteurs) sans n�
 L'horodatage fiable fait partie des principes important pour pouvoir recoller les informations des différentes stations.
 
 La normalisation des unités et des mesures doit viser les bonnes pratiques en météorologie, dans les limites de ce qui est fourni par Davis.
-## 1A. Etat actuel (4/8/2026 v0.1.3)
+## 1A. Etat actuel (13/8/2026 v0.1.6c)
 
 En cours de mise au point, fonctionnel avec ISS filaire (seul temp et Hum testés), nRF52840-Xiao, BME680, RTC DS3231, GPS, carte µSD.
 Certains paramétrage peuvent s'effectuer depuis le moniteur série (serial).
 Sur la carte SD on écrit toutes les 30s (paramétrable) dans un fichier .csv; toutes les 5 minutes (paramétrable) on fait la synthèse (comme le fait WeeWx/Davis...) et on enregistre aussi (c'est cela qu'on enverra).
 On écrit aussi un EVENTS.log qui récapitule les évènements principaux (dont les durée d'allumage GPS et les décalages horaires - permettront d'estimer la possibilité d'allonger la durée de recalage).
--> release v0.1.3
-
-La prochaine étape est l'implantation du Meshtastic en protobuff simplifié.
--> 13/8/26 globalement validé, les infos remontent mais timing à consolider
+Meshtastic en protobuff simplifié : globalement validé, les infos remontent, timing à consolider
 
 En cours : automatisation du capteur I2C interne pour supporter/reconaitre automatiquement BME680, BME280, BMP280 ...
 
@@ -99,4 +96,11 @@ Synthétiser les informations au pas de 5 minutes comme le fait la console+datal
 # 9. ?
 
 ?
+
+# Photos
+
+![3D](/hardware/ISS_VP2_Datalog.png "3D").
+
+![Experimentation](/Photo_20261003.jpg "Expérimentation").
+
 
