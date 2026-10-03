@@ -20,8 +20,10 @@ La normalisation des unités et des mesures doit viser les bonnes pratiques en m
 En cours de mise au point, fonctionnel avec ISS filaire (seul temp et Hum testés), nRF52840-Xiao, BME680, RTC DS3231, GPS, carte µSD.
 Certains paramétrage peuvent s'effectuer depuis le moniteur série (serial).
 Sur la carte SD on écrit toutes les 30s (paramétrable) dans un fichier .csv; toutes les 5 minutes (paramétrable) on fait la synthèse (comme le fait WeeWx/Davis...) et on enregistre aussi (c'est cela qu'on enverra).
+
 On écrit aussi un EVENTS.log qui récapitule les évènements principaux (dont les durée d'allumage GPS et les décalages horaires - permettront d'estimer la possibilité d'allonger la durée de recalage).
-Meshtastic en protobuff simplifié : globalement validé, les infos remontent, timing à consolider
+
+Meshtastic en protobuff simplifié est globalement validé, les infos remontent, tests à poursuivre.
 
 En cours : automatisation du capteur I2C interne pour supporter/reconaitre automatiquement BME680, BME280, BMP280 ...
 
@@ -82,16 +84,15 @@ La cible visée étant l'autonomie totale (énergétique et réseau) la préserv
 
 L'usage de panneaux photovoltaique et de batteries ou super condensateurs est quasi indispensable et sera à optimiser.
 
+Cette partie n'a pas encore été détaillée.
+
 # 8. A venir
 
-Cf ToDo list pour les détails
+Cf ToDo list et issues pour les détails
 
-Tester gestion du temps avec GPS et RTC - en cours, reste GPS
+Augmenter/tester les capteurs de pression (et autres mesures) intégrables (BME280, DHT, ...) et automatiser (le BME680 est déjà intégré) pour disposer de la température interne et de la pression atmosphérique (éléments qui étaient fournis par la console et non par l'ISS).
 
-Intégrer BME680 - réalisé et d'autres capteurs (BME280, DHT, ...) pour disposer de la température interne et de la pression atmosphérique (éléments qui étaient fournis par la console et non par l'ISS)
 Calibration des différentes données (température, humidité, pression) et stockage des paramètres de calibration
-
-Synthétiser les informations au pas de 5 minutes comme le fait la console+datalogger
 
 # 9. ?
 
